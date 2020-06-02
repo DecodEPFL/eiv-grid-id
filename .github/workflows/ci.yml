@@ -17,11 +17,16 @@ jobs:
 
       - name: Check version
         run: |
+          conda init
           conda --version
           which python
 
       - name: Install dependencies
         run: conda env update -f environment.yml
+
+      - name: Select environment
+        run: |
+          conda activate eiv-grid-id
 
       - name: Test
         run: pytest test/
