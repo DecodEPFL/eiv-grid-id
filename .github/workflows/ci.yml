@@ -14,17 +14,18 @@ jobs:
         uses: goanpeca/setup-miniconda@v1.5.0
         with:
           auto-update-conda: true
-          python-version: 3.7
-          activate-environment: eiv-grid-id
           environment-file: environment.yml
           auto-activate-base: false
 
       - name: Check version
+        shell: bash -l {0}
         run: |
+          conda activate eiv-grid-id
           conda --version
           which python
 
       - name: Test
+        shell: bash -l {0}
         run: pytest test/
 
 
