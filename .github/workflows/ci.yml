@@ -17,7 +17,7 @@ jobs:
 
       - name: Check version
         run: |
-          conda init
+          conda init bash
           conda --version
           which python
 
