@@ -16,3 +16,4 @@ dependencies:
   - pip
   - pip:
       - pandapower==2.2.2
+      - nbstripout==0.3.7
