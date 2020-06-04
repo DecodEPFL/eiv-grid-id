@@ -17,3 +17,10 @@ def add_load_power_control(net: pp.pandapowerNet, load_p: np.array, load_q: np.a
     pq_net = add_single_load_controller(p_net, 'q_mvar', load_q)
 
     return pq_net
+
+
+def make_y_bus(net: pp.pandapowerNet) -> np.array:
+    run_net = net.deepcopy()
+    pp.runpp(run_net, numba=False)
+    y_bus = run_net['_ppc']['internal']['Ybus'].todense()
+    return y_bus
