@@ -5,9 +5,9 @@ import pandas as pd
 from pandapower.networks import case6ww
 from pytest import fixture
 
-from src.load_profile import generate_gaussian_load
-from src.network import add_load_power_control, make_y_bus
-from src.simulation import run_simulation, get_current_and_voltage
+from src.simulation.load_profile import generate_gaussian_load
+from src.simulation.network import add_load_power_control, make_y_bus
+from src.simulation.simulation import run_simulation, get_current_and_voltage
 
 
 @fixture

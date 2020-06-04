@@ -1,8 +1,8 @@
 import numpy as np
 from pandapower.networks import case4gs
 
-from src.load_profile import generate_gaussian_load
-from src.network import add_load_power_control
+from src.simulation.load_profile import generate_gaussian_load
+from src.simulation.network import add_load_power_control
 
 
 def test_gaussian_load_generation():
