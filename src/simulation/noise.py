@@ -3,14 +3,14 @@ from typing import Tuple
 import numpy as np
 
 
-def add_noise_in_cartesion_coordinates(current: np.array, voltage: np.array, current_accuracy: float,
+def add_noise_in_cartesian_coordinates(current: np.array, voltage: np.array, current_accuracy: float,
                                        voltage_accuracy: float) -> Tuple[np.array, np.array]:
-    noisy_voltage = add_cartesion_noise_to_measurement(voltage, voltage_accuracy)
-    noisy_current = add_cartesion_noise_to_measurement(current, current_accuracy)
+    noisy_voltage = add_cartesian_noise_to_measurement(voltage, voltage_accuracy)
+    noisy_current = add_cartesian_noise_to_measurement(current, current_accuracy)
     return noisy_voltage, noisy_current
 
 
-def add_cartesion_noise_to_measurement(actual: np.array, accuracy: float) -> np.array:
+def add_cartesian_noise_to_measurement(actual: np.array, accuracy: float) -> np.array:
     real_sd = np.mean(np.abs(np.real(actual)), axis=0) * accuracy / 3
     imag_sd = np.mean(np.abs(np.imag(actual)), axis=0) * accuracy / 3
     noise_real = np.random.normal(0, real_sd, actual.shape)

@@ -1,7 +1,7 @@
 import numpy as np
 from pytest import fixture
 
-from src.simulation.noise import add_noise_in_cartesion_coordinates, add_noise_in_polar_coordinates
+from src.simulation.noise import add_noise_in_cartesian_coordinates, add_noise_in_polar_coordinates
 
 
 @fixture
@@ -14,14 +14,14 @@ def grid_model():
 
 def test_create_noise_free_measurements(grid_model):
     voltage, current, _ = grid_model
-    noisy_voltage, noisy_current = add_noise_in_cartesion_coordinates(current, voltage, 0, 0)
+    noisy_voltage, noisy_current = add_noise_in_cartesian_coordinates(current, voltage, 0, 0)
     np.testing.assert_equal(noisy_voltage, voltage)
     np.testing.assert_equal(noisy_current, current)
 
 
 def test_create_noisy_measurements(grid_model):
     voltage, current, _ = grid_model
-    noisy_voltage, noisy_current = add_noise_in_cartesion_coordinates(current, voltage, 0.01, 0.01)
+    noisy_voltage, noisy_current = add_noise_in_cartesian_coordinates(current, voltage, 0.01, 0.01)
     np.testing.assert_allclose(noisy_voltage, voltage, rtol=0.05)
     np.testing.assert_allclose(noisy_current, current, rtol=0.05)
     assert not np.allclose(noisy_voltage, voltage)
