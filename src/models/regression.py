@@ -65,6 +65,8 @@ class ComplexLasso:
 
         res = []
         for lambda_value in self.lambdas:
+            if self.verbose:
+                print(f'Running lambda: {lambda_value}')
             lambda_param.value = lambda_value
             problem.solve(verbose=self.verbose)
             beta_lasso_real = beta.value[:x.shape[1]]
