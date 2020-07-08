@@ -23,4 +23,4 @@ def test_sparse_total_least_square(model):
     x, y, beta = model
     r = SparseTotalLeastSquare(lambda_value=10e-10)
     r.fit(x, y)
-    np.testing.assert_allclose(r.fitted_admittance_matrix, beta)
+    np.testing.assert_allclose(r.fitted_admittance_matrix, beta, rtol=10e-6, atol=10e-6)
