@@ -41,7 +41,7 @@ class SparseTotalLeastSquare(GridIdentificationModel):
         self._max_iterations = max_iterations
 
     @property
-    def iteration(self):
+    def iterations(self):
         return self._iterations
 
     @staticmethod
@@ -93,7 +93,7 @@ class SparseTotalLeastSquare(GridIdentificationModel):
             target = self.full_target(b, a, da.value, sigma_b, sigma_a, self._lambda, underline_beta, beta.value).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))
 
-            if it > 0 and self.is_stationary_point(target, self.iteration[it - 1].target_function):
+            if it > 0 and self.is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
 
         self._admittance_matrix = beta_lasso
