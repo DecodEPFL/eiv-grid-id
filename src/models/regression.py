@@ -1,49 +1,33 @@
-from dataclasses import dataclass
-from typing import List
+from typing import Tuple
 
 import cvxpy as cp
 import numpy as np
 from numpy.linalg import inv
 
-
-@dataclass
-class ComplexRegressionResults:
-    x: np.array
-    y: np.array
-    fitted_beta: np.array
+from src.identification.error_metrics import fro_error
+from src.models.abstract_models import GridIdentificationModel, GridIdentificationModelCV, CVTrialResult
 
 
-class ComplexRegression:
-    def fit(self, x: np.array, y: np.array) -> ComplexRegressionResults:
-        beta = inv(x.conj().T @ x) @ x.conj().T @ y
-        return ComplexRegressionResults(x, y, beta)
+class ComplexRegression(GridIdentificationModel):
+
+    def fit(self, x: np.array, y: np.array):
+        self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ y
 
 
-@dataclass
-class BestComplexLassoResult:
-    x: np.array
-    y: np.array
-    lambda_value: float
-    metric_value: float
-    fitted_beta: np.array
+class ComplexLasso(GridIdentificationModelCV):
+    def __init__(self, real_admittance: np.array, lambdas=np.logspace(-2, 2, 100), verbose=True):
+        super().__init__()
+        self._lambdas = lambdas
+        self._verbose = verbose
+        self._real_admittance = real_admittance
 
+    @staticmethod
+    def _vectorize_y(y: np.array) -> np.array:
+        return np.ravel(y, 'F')
 
-@dataclass
-class ComplexLassoResult:
-    x: np.array
-    y: np.array
-    lambdas: np.array
-    fitted_betas: List[np.array]
-
-    def get_best_by(self, metric_func):
-        index, value = min(enumerate(self.fitted_betas), key=lambda b: metric_func(b[1]))
-        return BestComplexLassoResult(self.x, self.y, self.lambdas[index], metric_func(value), value)
-
-
-class ComplexLasso:
-    def __init__(self, lambdas=np.logspace(-2, 2, 100), verbose=True):
-        self.lambdas = lambdas
-        self.verbose = verbose
+    @staticmethod
+    def _vectorize_x(x: np.array) -> np.array:
+        return np.kron(np.eye(x.shape[1]), x)
 
     @staticmethod
     def _convert_y_to_real(y: np.array) -> np.array:
@@ -54,24 +38,40 @@ class ComplexLasso:
         return np.block([[np.real(x), -np.imag(x)], [np.imag(x), np.real(x)]])
 
     @staticmethod
+    def _vectorize_and_make_real(x: np.array, y: np.array) -> Tuple[np.array, np.array]:
+        x_vect, y_vect = ComplexLasso._vectorize_x(x), ComplexLasso._vectorize_y(y)
+        x_real, y_real = ComplexLasso._convert_x_to_real(x_vect), ComplexLasso._convert_y_to_real(y_vect)
+        return x_real, y_real
+
+    @staticmethod
+    def _unvectorize_parameter_and_make_complex(beta_fitted: np.array) -> np.array:
+        img_start_index = int(beta_fitted.size / 2)
+        beta_matrix_shape = int(np.sqrt(img_start_index))
+        beta_real = beta_fitted[:img_start_index]
+        beta_img = beta_fitted[img_start_index:]
+        beta = beta_real + 1j * beta_img
+        beta_matrix = np.reshape(beta, (beta_matrix_shape, beta_matrix_shape), 'F')
+        return beta_matrix
+
+    @staticmethod
     def _objective_function(x_vect: np.array, y_vect: np.array, beta, lambda_value):
         return cp.norm2(x_vect @ beta - y_vect) ** 2 + lambda_value * cp.norm1(beta)
 
     def fit(self, x: np.array, y: np.array):
-        x_tile, y_tilde = self._convert_x_to_real(x), self._convert_y_to_real(y)
-        beta = cp.Variable(x_tile.shape[1])
+        x_tilde, y_tilde = self._vectorize_and_make_real(x, y)
+        beta = cp.Variable(x_tilde.shape[1])
         lambda_param = cp.Parameter(nonneg=True)
-        problem = cp.Problem(cp.Minimize(self._objective_function(x_tile, y_tilde, beta, lambda_param)))
+        problem = cp.Problem(cp.Minimize(self._objective_function(x_tilde, y_tilde, beta, lambda_param)))
 
-        res = []
-        for lambda_value in self.lambdas:
-            if self.verbose:
+        self._cv_trials = []
+        for lambda_value in self._lambdas:
+            if self._verbose:
                 print(f'Running lambda: {lambda_value}')
             lambda_param.value = lambda_value
-            problem.solve(verbose=self.verbose)
-            beta_lasso_real = beta.value[:x.shape[1]]
-            beta_lasso_img = beta.value[x.shape[1]:]
-            beta_lasso = beta_lasso_real + 1j * beta_lasso_img
-            res.append(beta_lasso)
+            problem.solve(verbose=self._verbose)
+            beta_lasso = self._unvectorize_parameter_and_make_complex(beta.value)
+            self._cv_trials.append(CVTrialResult({'lambda': lambda_value}, beta_lasso))
 
-        return ComplexLassoResult(x, y, self.lambdas, res)
+        index, value = min(enumerate(self.cv_trials),
+                           key=lambda t: fro_error(self._real_admittance, t[1].fitted_parameters))
+        self._admittance_matrix = self.cv_trials[index].fitted_parameters
