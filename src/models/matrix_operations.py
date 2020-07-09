@@ -4,7 +4,7 @@ import numpy as np
 
 
 def vectorize_matrix(m: np.array) -> np.array:
-    return m.flatten('F')
+    return np.array(m).flatten('F')
 
 
 def unvectorize_matrix(v: np.array, shape: Tuple[int, int]) -> np.array:
