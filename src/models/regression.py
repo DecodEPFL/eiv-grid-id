@@ -57,3 +57,4 @@ class ComplexLasso(GridIdentificationModelCV):
         index, _ = min(enumerate(self.cv_trials),
                        key=lambda t: fro_error(self._real_admittance, t[1].fitted_parameters))
         self._admittance_matrix = self.cv_trials[index].fitted_parameters
+        self._best_hyperparams = self.cv_trials[index].hyperparameters

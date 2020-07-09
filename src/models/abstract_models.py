@@ -30,7 +30,12 @@ class GridIdentificationModelCV(GridIdentificationModel, ABC):
     def __init__(self):
         super().__init__()
         self._cv_trials = None
+        self._best_hyperparams = None
 
     @property
     def cv_trials(self) -> List[CVTrialResult]:
         return self._cv_trials
+
+    @property
+    def best_hyperparams(self) -> dict:
+        return self._best_hyperparams
