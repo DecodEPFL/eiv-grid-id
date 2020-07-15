@@ -11,31 +11,49 @@ class CVTrialResult:
     fitted_parameters: np.array
 
 
+class UnweightedModel(ABC):
+    @abstractmethod
+    def fit(self, x: np.array, y: np.array):
+        pass
+
+
+class LatencyWeightedModel(ABC):
+    @abstractmethod
+    def fit(self, x: np.array, y: np.array, sigma_e_y: np.array):
+        pass
+
+
+class MisfitWeightedModel(ABC):
+    @abstractmethod
+    def fit(self, x: np.array, y: np.array, sigma_e_y: np.array, sigma_e_x: np.array):
+        pass
+
+
 class GridIdentificationModel(ABC):
 
     def __init__(self):
+        super().__init__()
         self._admittance_matrix = None
 
     @property
     def fitted_admittance_matrix(self) -> np.array:
         return self._admittance_matrix
 
-    @abstractmethod
-    def fit(self, x: np.array, y: np.array):
-        pass
 
+class CVModel(ABC):
 
-class GridIdentificationModelCV(GridIdentificationModel, ABC):
-
-    def __init__(self):
+    def __init__(self, true_admittance, metric_func):
         super().__init__()
         self._cv_trials = None
-        self._best_hyperparams = None
+        self._true_admittance = true_admittance
+        self._metric_func = metric_func
 
     @property
     def cv_trials(self) -> List[CVTrialResult]:
         return self._cv_trials
 
     @property
-    def best_hyperparams(self) -> dict:
-        return self._best_hyperparams
+    def best_trial(self) -> CVTrialResult:
+        index, _ = min(enumerate(self.cv_trials),
+                       key=lambda t: self._metric_func(self._true_admittance, t[1].fitted_parameters))
+        return self.cv_trials[index]

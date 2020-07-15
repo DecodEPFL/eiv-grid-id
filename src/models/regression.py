@@ -5,23 +5,29 @@ import numpy as np
 from numpy.linalg import inv
 
 from src.identification.error_metrics import fro_error
-from src.models.abstract_models import GridIdentificationModel, GridIdentificationModelCV, CVTrialResult
+from src.models import DEFAULT_SOLVER, _solve_problem_with_solver
+from src.models.abstract_models import GridIdentificationModel, CVTrialResult, LatencyWeightedModel, UnweightedModel, \
+    CVModel
 from src.models.matrix_operations import vectorize_matrix, make_real_matrix, make_real_vector, make_complex_vector, \
     unvectorize_matrix
 
 
-class ComplexRegression(GridIdentificationModel):
+class ComplexRegression(GridIdentificationModel, LatencyWeightedModel):
 
-    def fit(self, x: np.array, y: np.array):
-        self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ y
+    def fit(self, x: np.array, y: np.array, sigma_e_y: np.array = None):
+        if sigma_e_y is None:
+            self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ y
+        else:
+            inv_sigma_e_y = inv(sigma_e_y)
+            self._admittance_matrix = inv(x.conj().T @ inv_sigma_e_y @ x) @ x.conj().T @ inv_sigma_e_y @ y
 
 
-class ComplexLasso(GridIdentificationModelCV):
-    def __init__(self, real_admittance: np.array, lambdas=np.logspace(-2, 2, 100), verbose=True):
-        super().__init__()
+class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
+    def __init__(self, true_admittance: np.array, lambdas=np.logspace(-2, 2, 100), verbose=True, solver=DEFAULT_SOLVER):
+        CVModel.__init__(self, true_admittance, fro_error)
         self._lambdas = lambdas
         self._verbose = verbose
-        self._real_admittance = real_admittance
+        self._solver = solver
 
     @staticmethod
     def _vectorize_and_make_real(x: np.array, y: np.array) -> Tuple[np.array, np.array]:
@@ -50,11 +56,8 @@ class ComplexLasso(GridIdentificationModelCV):
             if self._verbose:
                 print(f'Running lambda: {lambda_value}')
             lambda_param.value = lambda_value
-            problem.solve(verbose=self._verbose)
+            _solve_problem_with_solver(problem, verbose=self._verbose, solver=self._solver)
             beta_lasso = self._unvectorize_parameter_and_make_complex(beta.value)
             self._cv_trials.append(CVTrialResult({'lambda': lambda_value}, beta_lasso))
 
-        index, _ = min(enumerate(self.cv_trials),
-                       key=lambda t: fro_error(self._real_admittance, t[1].fitted_parameters))
-        self._admittance_matrix = self.cv_trials[index].fitted_parameters
-        self._best_hyperparams = self.cv_trials[index].hyperparameters
+        self._admittance_matrix = self.best_trial.fitted_parameters
