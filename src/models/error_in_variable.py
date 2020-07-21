@@ -3,8 +3,10 @@ from dataclasses import dataclass
 
 import cvxpy as cp
 import numpy as np
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
 
-from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
+from src.models.abstract_models import GridIdentificationModel, UnweightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
     unvectorize_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
@@ -31,7 +33,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         self._admittance_matrix = beta_reshaped
 
 
-class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
+class SparseTotalLeastSquare(GridIdentificationModel, UnweightedModel):
 
     def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, verbose=False,
                  solver=DEFAULT_SOLVER):
@@ -49,25 +51,20 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         return self._iterations
 
     @staticmethod
-    def efficient_quadratic(v, m):
-        return cp.quad_form(v, m) if m is not None else cp.norm2(v) ** 2
-
-    @staticmethod
-    def _lasso_target(b, A, dA, inv_sigma_b, lambda_value, beta):
+    def _lasso_target(b, A, dA, lambda_value, beta):
         error = b - (A - dA) @ beta
-        loss = SparseTotalLeastSquare.efficient_quadratic(error, inv_sigma_b) + lambda_value * cp.norm1(beta)
+        loss = cp.norm2(error) + lambda_value * cp.norm1(beta)
         return loss
 
     @staticmethod
-    def _qp_target(b, A, da, dA, inv_sigma_a, inv_sigma_b, beta):
+    def _qp_target(b, A, da, dA, beta):
         error = b - (A - dA) @ beta
-        loss = SparseTotalLeastSquare.efficient_quadratic(error, inv_sigma_b) + \
-               SparseTotalLeastSquare.efficient_quadratic(da, inv_sigma_a)
+        loss = cp.norm2(error) + cp.norm2(da)
         return loss
 
     @staticmethod
-    def _full_target(b, A, da, dA, sigma_a, sigma_b, beta, lambda_value):
-        return SparseTotalLeastSquare._qp_target(b, A, da, dA, sigma_a, sigma_b, beta) + lambda_value * cp.norm1(beta)
+    def _full_target(b, A, da, dA, beta, lambda_value):
+        return SparseTotalLeastSquare._qp_target(b, A, da, dA, beta) + lambda_value * cp.norm1(beta)
 
     @staticmethod
     def _build_dA_variable(da, n, samples):
@@ -82,7 +79,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
     def _is_stationary_point(self, f_cur, f_prev) -> bool:
         return np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol
 
-    def fit(self, x: np.array, y: np.array, sigma_e_x: np.array = None, sigma_e_y: np.array = None):
+    def fit(self, x: np.array, y: np.array):
         start_time = time.time()
 
         samples, n = x.shape
@@ -91,18 +88,15 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         dA = make_real_matrix(np.kron(np.eye(n), np.zeros(x.shape)))
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(y))
-        inv_sigma_a = np.linalg.inv(sigma_e_x) if sigma_e_x is not None else None
-        inv_sigma_b = np.linalg.inv(sigma_e_y) if sigma_e_y is not None else None
 
         beta = cp.Variable(n * n * 2)
-        da = cp.Variable(a.size)
         print("--- Setup: %s s ---" % (time.time() - start_time))
 
         beta_lasso = None
         for it in range(self._max_iterations):
             print(f'\n\n\n---------------------Iteration {it}-------------------------')
             start_time = time.time()
-            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, inv_sigma_b, self._lambda, beta)))
+            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, self._lambda, beta)))
             print("--- Lasso problem %s s ---" % (time.time() - start_time))
 
             start_time = time.time()
@@ -111,23 +105,23 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
             start_time = time.time()
             beta_lasso = unvectorize_matrix(make_complex_vector(beta.value), (n, n))
-            dA_var = self._build_dA_variable(da, n, samples)
-            print("--- Underline beta %s s ---" % (time.time() - start_time))
+            real_beta_kron = sparse.kron(np.real(beta_lasso).T, sparse.eye(samples))
+            imag_beta_kron = sparse.kron(np.imag(beta_lasso).T, sparse.eye(samples))
+            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
+            sys_matrix = underline_y.T @ underline_y + sparse.eye(2 * samples * n)
+            sys_vector = underline_y.T @ underline_y @ a - underline_y.T @ b
+            print("--- System construction %s s ---" % (time.time() - start_time))
 
             start_time = time.time()
-            qp_prob = cp.Problem(cp.Minimize(self._qp_target(b, A, da, dA_var, inv_sigma_a, inv_sigma_b, beta.value)))
-            print("--- QP problem %s s ---" % (time.time() - start_time))
+            da = spsolve(sys_matrix, sys_vector)
+            print("--- System solution %s s ---" % (time.time() - start_time))
 
             start_time = time.time()
-            _solve_problem_with_solver(qp_prob, verbose=self._verbose, solver=self._solver)
-            print("--- QP solve %s s ---" % (time.time() - start_time))
-
-            start_time = time.time()
-            e_qp = unvectorize_matrix(make_complex_vector(da.value), x.shape)
+            e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
             print("--- e_qp and dA %s s ---" % (time.time() - start_time))
 
-            target = self._full_target(b, A, da.value, dA, sigma_e_x, sigma_e_y, beta.value, self._lambda).value
+            target = self._full_target(b, A, da, dA, beta.value, self._lambda).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))
 
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):

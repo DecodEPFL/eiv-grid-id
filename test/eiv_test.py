@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from pytest import fixture
 
 from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
@@ -19,6 +20,7 @@ def test_total_least_square(model):
     np.testing.assert_allclose(r.fitted_admittance_matrix, beta)
 
 
+@pytest.mark.skip()
 def test_sparse_total_least_square(model):
     x, y, beta = model
     r = SparseTotalLeastSquare(lambda_value=10e-10, verbose=True)
