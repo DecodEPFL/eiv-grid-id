@@ -5,11 +5,11 @@ import numpy as np
 from numpy.linalg import inv
 
 from src.identification.error_metrics import fro_error
-from src.models import DEFAULT_SOLVER, _solve_problem_with_solver
 from src.models.abstract_models import GridIdentificationModel, CVTrialResult, LatencyWeightedModel, UnweightedModel, \
     CVModel
 from src.models.matrix_operations import vectorize_matrix, make_real_matrix, make_real_vector, make_complex_vector, \
     unvectorize_matrix
+from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
 
 class ComplexRegression(GridIdentificationModel, LatencyWeightedModel):

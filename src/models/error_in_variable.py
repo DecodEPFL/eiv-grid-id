@@ -4,10 +4,10 @@ from dataclasses import dataclass
 import cvxpy as cp
 import numpy as np
 
-from src.models import DEFAULT_SOLVER, _solve_problem_with_solver
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
     unvectorize_matrix
+from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
 
 @dataclass
