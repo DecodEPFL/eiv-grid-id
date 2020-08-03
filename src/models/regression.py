@@ -5,21 +5,17 @@ import numpy as np
 from numpy.linalg import inv
 
 from src.identification.error_metrics import fro_error
-from src.models.abstract_models import GridIdentificationModel, CVTrialResult, LatencyWeightedModel, UnweightedModel, \
+from src.models.abstract_models import GridIdentificationModel, CVTrialResult, UnweightedModel, \
     CVModel
 from src.models.matrix_operations import vectorize_matrix, make_real_matrix, make_real_vector, make_complex_vector, \
     unvectorize_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
 
-class ComplexRegression(GridIdentificationModel, LatencyWeightedModel):
+class ComplexRegression(GridIdentificationModel, UnweightedModel):
 
-    def fit(self, x: np.array, y: np.array, sigma_e_y: np.array = None):
-        if sigma_e_y is None:
-            self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ y
-        else:
-            inv_sigma_e_y = inv(sigma_e_y)
-            self._admittance_matrix = inv(x.conj().T @ inv_sigma_e_y @ x) @ x.conj().T @ inv_sigma_e_y @ y
+    def fit(self, x: np.array, y: np.array):
+        self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ y
 
 
 class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
@@ -43,7 +39,7 @@ class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
 
     @staticmethod
     def _objective_function(x_vect: np.array, y_vect: np.array, beta, lambda_value):
-        return cp.norm2(x_vect @ beta - y_vect) ** 2 + lambda_value * cp.norm1(beta)
+        return cp.sum_squares(x_vect @ beta - y_vect) + lambda_value * cp.norm1(beta)
 
     def fit(self, x: np.array, y: np.array):
         x_tilde, y_tilde = self._vectorize_and_make_real(x, y)

@@ -1,7 +1,8 @@
 import numpy as np
+from scipy import sparse
 
 
-def var_real(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+def average_true_var_real(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
     m_var = sd_magnitude ** 2
     f_var = sd_phase ** 2
@@ -13,7 +14,7 @@ def var_real(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.
     return real_var
 
 
-def var_imag(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+def average_true_var_imag(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
     m_var = sd_magnitude ** 2
     f_var = sd_phase ** 2
@@ -25,21 +26,21 @@ def var_imag(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.
     return imag_var
 
 
-def cov_real_imag(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+def average_true_cov(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
     m_var = sd_magnitude ** 2
     f_var = sd_phase ** 2
-    real_imag_cov = np.sin(f) * np.cos(f) * np.exp(-4 * f_var) * (m_var + (m ** 2 + m_var) * (1 - np.exp(-f_var)))
+    real_imag_cov = np.sin(f) * np.cos(f) * np.exp(-4 * f_var) * (m_var + (m ** 2 + m_var) * (1 - np.exp(f_var)))
     return real_imag_cov
 
 
-def cartesian_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     measurement_vect = measurement.flatten('F')
-    real_variance = var_real(measurement_vect, sd_magnitude, sd_phase)
-    imag_variance = var_imag(measurement_vect, sd_magnitude, sd_phase)
-    real_imag_covariance = cov_real_imag(measurement_vect, sd_magnitude, sd_magnitude)
-    sigma = np.block([
-        [np.diag(real_variance), np.diag(real_imag_covariance)],
-        [np.diag(real_imag_covariance), np.diag(imag_variance)]
+    real_variance = average_true_var_real(measurement_vect, sd_magnitude, sd_phase)
+    imag_variance = average_true_var_imag(measurement_vect, sd_magnitude, sd_phase)
+    real_imag_covariance = average_true_cov(measurement_vect, sd_magnitude, sd_magnitude)
+    sigma = sparse.bmat([
+        [sparse.diags(real_variance), sparse.diags(real_imag_covariance)],
+        [sparse.diags(real_imag_covariance), sparse.diags(imag_variance)]
     ])
     return sigma

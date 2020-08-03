@@ -6,7 +6,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
-from src.models.abstract_models import GridIdentificationModel, UnweightedModel
+from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
     unvectorize_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
@@ -33,7 +33,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         self._admittance_matrix = beta_reshaped
 
 
-class SparseTotalLeastSquare(GridIdentificationModel, UnweightedModel):
+class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
     def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, verbose=False,
                  solver=DEFAULT_SOLVER):
@@ -51,41 +51,34 @@ class SparseTotalLeastSquare(GridIdentificationModel, UnweightedModel):
         return self._iterations
 
     @staticmethod
-    def _lasso_target(b, A, dA, lambda_value, beta):
+    def _efficient_quadratic(v, m):
+        return cp.sum_squares(v) if m is None else cp.quad_form(v, m)
+
+    @staticmethod
+    def _lasso_target(b, A, dA, b_weight, lambda_value, beta):
         error = b - (A - dA) @ beta
-        loss = cp.norm2(error) + lambda_value * cp.norm1(beta)
+        quadratic_loss = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
+        loss = quadratic_loss + lambda_value * cp.norm1(beta)
         return loss
 
     @staticmethod
-    def _qp_target(b, A, da, dA, beta):
+    def _full_target(b, A, da, dA, inv_sigma_a, inv_sigma_b, beta, lambda_value):
         error = b - (A - dA) @ beta
-        loss = cp.norm2(error) + cp.norm2(da)
+        quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, inv_sigma_b)
+        quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, inv_sigma_a)
+        loss = quadratic_loss_a + quadratic_loss_b + lambda_value * cp.norm1(beta)
         return loss
-
-    @staticmethod
-    def _full_target(b, A, da, dA, beta, lambda_value):
-        return SparseTotalLeastSquare._qp_target(b, A, da, dA, beta) + lambda_value * cp.norm1(beta)
-
-    @staticmethod
-    def _build_dA_variable(da, n, samples):
-        e_real_var = cp.reshape(da[:n * samples], (samples, n))
-        e_imag_var = cp.reshape(da[n * samples:], (samples, n))
-        dA_var = cp.bmat([
-            [cp.kron(np.eye(n), e_real_var), - cp.kron(np.eye(n), e_imag_var)],
-            [cp.kron(np.eye(n), e_imag_var), cp.kron(np.eye(n), e_real_var)]
-        ])
-        return dA_var
 
     def _is_stationary_point(self, f_cur, f_prev) -> bool:
         return np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol
 
-    def fit(self, x: np.array, y: np.array):
+    def fit(self, x: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None):
         start_time = time.time()
 
         samples, n = x.shape
 
         A = make_real_matrix(np.kron(np.eye(n), x))
-        dA = make_real_matrix(np.kron(np.eye(n), np.zeros(x.shape)))
+        dA = np.zeros(A.shape)
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(y))
 
@@ -96,7 +89,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, UnweightedModel):
         for it in range(self._max_iterations):
             print(f'\n\n\n---------------------Iteration {it}-------------------------')
             start_time = time.time()
-            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, self._lambda, beta)))
+            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, self._lambda, beta)))
             print("--- Lasso problem %s s ---" % (time.time() - start_time))
 
             start_time = time.time()
@@ -108,8 +101,14 @@ class SparseTotalLeastSquare(GridIdentificationModel, UnweightedModel):
             real_beta_kron = sparse.kron(np.real(beta_lasso).T, sparse.eye(samples))
             imag_beta_kron = sparse.kron(np.imag(beta_lasso).T, sparse.eye(samples))
             underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
-            sys_matrix = underline_y.T @ underline_y + sparse.eye(2 * samples * n)
-            sys_vector = underline_y.T @ underline_y @ a - underline_y.T @ b
+            if x_weight is not None and y_weight is not None:
+                ysy = underline_y.T @ y_weight @ underline_y
+                sys_matrix = sparse.csc_matrix(ysy + x_weight)
+                sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
+            else:
+                ysy = underline_y.T @ underline_y
+                sys_matrix = ysy + sparse.eye(2 * n * samples)
+                sys_vector = ysy @ a - underline_y.T @ b
             print("--- System construction %s s ---" % (time.time() - start_time))
 
             start_time = time.time()
@@ -121,7 +120,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, UnweightedModel):
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
             print("--- e_qp and dA %s s ---" % (time.time() - start_time))
 
-            target = self._full_target(b, A, da, dA, beta.value, self._lambda).value
+            target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, self._lambda).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))
 
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):

@@ -19,13 +19,13 @@ class UnweightedModel(ABC):
 
 class LatencyWeightedModel(ABC):
     @abstractmethod
-    def fit(self, x: np.array, y: np.array, sigma_e_y: np.array):
+    def fit(self, x: np.array, y: np.array, y_weight: np.array):
         pass
 
 
 class MisfitWeightedModel(ABC):
     @abstractmethod
-    def fit(self, x: np.array, y: np.array, sigma_e_y: np.array, sigma_e_x: np.array):
+    def fit(self, x: np.array, y: np.array, x_weight: np.array, y_weight: np.array):
         pass
 
 
