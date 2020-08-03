@@ -19,21 +19,18 @@ def add_cartesian_noise_to_measurement(actual: np.array, accuracy: float) -> Tup
     return noisy, real_sd, imag_sd
 
 
-def add_noise_in_polar_coordinates(current: np.array, voltage: np.array, magnitude_accuracy_pu: float,
-                                   phase_accuracy_deg: float) -> Tuple[np.array, np.array]:
-    noisy_voltage, _, _ = add_polar_noise_to_measurement(voltage, magnitude_accuracy_pu, phase_accuracy_deg)
-    noisy_current, _, _ = add_polar_noise_to_measurement(current, magnitude_accuracy_pu, phase_accuracy_deg)
+def add_noise_in_polar_coordinates(current: np.array, voltage: np.array, magnitude_sd: float,
+                                   phase_sd: float) -> Tuple[np.array, np.array]:
+    noisy_voltage = add_polar_noise_to_measurement(voltage, magnitude_sd, phase_sd)
+    noisy_current = add_polar_noise_to_measurement(current, magnitude_sd, phase_sd)
     return noisy_voltage, noisy_current
 
 
-def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_accuracy_pu: float,
-                                   phase_accuracy_deg: float) -> Tuple[np.array, np.array, np.array]:
+def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: float, phase_sd: float) -> np.array:
     magnitude, phase = np.abs(actual_measurement), np.angle(actual_measurement)
-    magnitude_sd = magnitude_accuracy_pu / 3
-    phase_sd = phase_accuracy_deg * np.pi / 180 / 3
     magnitude_noise = np.random.normal(0, magnitude_sd, magnitude.shape)
     phase_noise = np.random.normal(0, phase_sd, phase.shape)
     noisy_magnitude = magnitude + magnitude_noise
     noisy_phase = phase + phase_noise
     noisy_measurement = noisy_magnitude * np.exp(1j * noisy_phase)
-    return noisy_measurement, magnitude_sd, phase_sd
+    return noisy_measurement
