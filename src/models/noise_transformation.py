@@ -2,6 +2,19 @@ import numpy as np
 from scipy import sparse
 
 
+def naive_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+    m, f = np.abs(measurement), np.angle(measurement)
+    m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
+    real_var = np.cos(f) ** 2 * m_var + m ** 2 * np.sin(f) ** 2 * f_var
+    imag_var = np.sin(f) ** 2 * m_var + m ** 2 * np.cos(f) ** 2 * f_var
+    cov = np.sin(f) * np.cos(f) * (m_var + m ** 2 * f_var)
+    sigma = sparse.bmat([
+        [sparse.diags(real_var), sparse.diags(cov)],
+        [sparse.diags(cov), sparse.diags(imag_var)]
+    ])
+    return sigma
+
+
 def average_true_var_real(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
     m_var = sd_magnitude ** 2
