@@ -62,10 +62,10 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         return loss
 
     @staticmethod
-    def _full_target(b, A, da, dA, inv_sigma_a, inv_sigma_b, beta, lambda_value):
+    def _full_target(b, A, da, dA, a_weight, b_weight, beta, lambda_value):
         error = b - (A - dA) @ beta
-        quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, inv_sigma_b)
-        quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, inv_sigma_a)
+        quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
+        quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, a_weight)
         loss = quadratic_loss_a + quadratic_loss_b + lambda_value * cp.norm1(beta)
         return loss
 
