@@ -51,12 +51,12 @@ def average_true_cov(measurement: np.array, sd_magnitude: float, sd_phase: float
 
 
 def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
-    measurement_vect = measurement.flatten('F')
+    measurement_vect = vectorize_matrix(measurement)
     real_variance = average_true_var_real(measurement_vect, sd_magnitude, sd_phase)
     imag_variance = average_true_var_imag(measurement_vect, sd_magnitude, sd_phase)
     real_imag_covariance = average_true_cov(measurement_vect, sd_magnitude, sd_magnitude)
     sigma = sparse.bmat([
         [sparse.diags(real_variance), sparse.diags(real_imag_covariance)],
         [sparse.diags(real_imag_covariance), sparse.diags(imag_variance)]
-    ])
+    ], format='csc')
     return sigma
