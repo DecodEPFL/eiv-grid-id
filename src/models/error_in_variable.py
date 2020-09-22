@@ -35,9 +35,10 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 
 class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
-    def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, verbose=False,
-                 solver=DEFAULT_SOLVER):
+    def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, use_l1_penalty=True,
+                 verbose=False, solver=DEFAULT_SOLVER):
         GridIdentificationModel.__init__(self)
+        self._use_l1_penalty = use_l1_penalty
         self._iterations = []
         self._solver = solver
         self._verbose = verbose
@@ -54,19 +55,19 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
     def _efficient_quadratic(v, m):
         return cp.sum_squares(v) if m is None else cp.quad_form(v, m)
 
-    @staticmethod
-    def _lasso_target(b, A, dA, b_weight, lambda_value, beta):
+    def _lasso_target(self, b, A, dA, b_weight, lambda_value, beta):
         error = b - (A - dA) @ beta
         quadratic_loss = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
-        loss = quadratic_loss + lambda_value * cp.norm1(beta)
+        loss = quadratic_loss + lambda_value * cp.norm1(beta) if self._use_l1_penalty else quadratic_loss
         return loss
 
-    @staticmethod
-    def _full_target(b, A, da, dA, a_weight, b_weight, beta, lambda_value):
+    def _full_target(self, b, A, da, dA, a_weight, b_weight, beta, lambda_value):
         error = b - (A - dA) @ beta
         quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
         quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, a_weight)
-        loss = quadratic_loss_a + quadratic_loss_b + lambda_value * cp.norm1(beta)
+        loss = quadratic_loss_a + quadratic_loss_b
+        if self._use_l1_penalty:
+            loss = loss + lambda_value * cp.norm1(beta)
         return loss
 
     def _is_stationary_point(self, f_cur, f_prev) -> bool:
