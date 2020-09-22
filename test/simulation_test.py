@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandapower.networks import case6ww
-from pytest import fixture
+from pytest import fixture, approx
 
 from src.simulation.load_profile import generate_gaussian_load
 from src.simulation.network import add_load_power_control, make_y_bus
@@ -32,7 +32,7 @@ def test_simulation(test_net, tmpdir):
     assert (sim_result.va_degree.values <= 0).all()
     assert sim_result.vm_pu["0"].mean() == 1.05
     assert sim_result.vm_pu["1"].mean() == 1.05
-    assert sim_result.vm_pu["2"].mean() == 1.07
+    assert sim_result.vm_pu["2"].mean() == approx(1.07)
     assert sim_result.result_path.parent == tmp_dir_path
 
 
