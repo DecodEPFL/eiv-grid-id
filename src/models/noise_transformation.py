@@ -20,8 +20,7 @@ def naive_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase:
 
 def average_true_var_real(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
-    m_var = sd_magnitude ** 2
-    f_var = sd_phase ** 2
+    m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
     term_1 = (np.cos(f) ** 2) * (np.cosh(2 * f_var) - np.cosh(f_var))
     term_2 = (np.sin(f) ** 2) * (np.sinh(2 * f_var) - np.sinh(f_var))
     term_3 = (np.cos(f) ** 2) * (2 * np.cosh(2 * f_var) - np.cosh(f_var))
@@ -32,8 +31,7 @@ def average_true_var_real(measurement: np.array, sd_magnitude: float, sd_phase: 
 
 def average_true_var_imag(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
-    m_var = sd_magnitude ** 2
-    f_var = sd_phase ** 2
+    m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
     term_1 = (np.sin(f) ** 2) * (np.cosh(2 * f_var) - np.cosh(f_var))
     term_2 = (np.cos(f) ** 2) * (np.sinh(2 * f_var) - np.sinh(f_var))
     term_3 = (np.sin(f) ** 2) * (2 * np.cosh(2 * f_var) - np.cosh(f_var))
@@ -44,8 +42,7 @@ def average_true_var_imag(measurement: np.array, sd_magnitude: float, sd_phase: 
 
 def average_true_cov(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
     m, f = np.abs(measurement), np.angle(measurement)
-    m_var = sd_magnitude ** 2
-    f_var = sd_phase ** 2
+    m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
     real_imag_cov = np.sin(f) * np.cos(f) * np.exp(-4 * f_var) * (m_var + (m ** 2 + m_var) * (1 - np.exp(f_var)))
     return real_imag_cov
 
