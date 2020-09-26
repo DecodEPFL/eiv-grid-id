@@ -1,10 +1,10 @@
-import time
 from dataclasses import dataclass
 
 import cvxpy as cp
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
+from tqdm import tqdm
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
@@ -74,8 +74,6 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         return np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol
 
     def fit(self, x: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None):
-        start_time = time.time()
-
         samples, n = x.shape
 
         A = make_real_matrix(np.kron(np.eye(n), x))
@@ -84,20 +82,12 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         b = make_real_vector(vectorize_matrix(y))
 
         beta = cp.Variable(n * n * 2)
-        print("--- Setup: %s s ---" % (time.time() - start_time))
 
         beta_lasso = None
-        for it in range(self._max_iterations):
-            print(f'\n\n\n---------------------Iteration {it}-------------------------')
-            start_time = time.time()
+        for it in tqdm(range(self._max_iterations)):
             lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, self._lambda, beta)))
-            print("--- Lasso problem %s s ---" % (time.time() - start_time))
-
-            start_time = time.time()
             _solve_problem_with_solver(lasso_prob, verbose=self._verbose, solver=self._solver)
-            print("--- Lasso solve %s s ---" % (time.time() - start_time))
 
-            start_time = time.time()
             beta_lasso = unvectorize_matrix(make_complex_vector(beta.value), (n, n))
             real_beta_kron = sparse.kron(np.real(beta_lasso).T, sparse.eye(samples))
             imag_beta_kron = sparse.kron(np.imag(beta_lasso).T, sparse.eye(samples))
@@ -110,16 +100,11 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
                 ysy = underline_y.T @ underline_y
                 sys_matrix = ysy + sparse.eye(2 * n * samples)
                 sys_vector = ysy @ a - underline_y.T @ b
-            print("--- System construction %s s ---" % (time.time() - start_time))
 
-            start_time = time.time()
             da = spsolve(sys_matrix, sys_vector)
-            print("--- System solution %s s ---" % (time.time() - start_time))
 
-            start_time = time.time()
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
-            print("--- e_qp and dA %s s ---" % (time.time() - start_time))
 
             target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, self._lambda).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))
