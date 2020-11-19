@@ -28,6 +28,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         v = vh.conj().T
         v_xy = v[:n, n:]
         v_yy = v[n:, n:]
+        print(v_yy)
         beta = - v_xy @ np.linalg.inv(v_yy)
         beta_reshaped = beta.copy() if beta.shape[1] > 1 else beta.flatten()
         self._admittance_matrix = beta_reshaped
@@ -62,6 +63,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         return loss
 
     def _full_target(self, b, A, da, dA, a_weight, b_weight, beta, lambda_value):
+        self.tmp = (b.shape, A.shape, dA.shape, beta.shape)
         error = b - (A - dA) @ beta
         quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
         quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, a_weight)
@@ -105,6 +107,60 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
+
+            target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, self._lambda).value
+            self._iterations.append(IterationStatus(it, beta_lasso, target))
+
+            if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
+                break
+
+        self._admittance_matrix = beta_lasso
+
+    def fit_with_vectored_data(self, x: np.array, x_kroned: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None):
+        """ Fits parameters to data using the Sparse-TLS method. The measurements are expected to be already vectorized,
+        while the variables aren't, but they are supposed to be Kroneckered with an identity of size n.
+
+        @param x An array of variables.
+        @param x_kroned The same array, Kroneckered with eye(n).
+        @param y A vectorized array of measurements.
+        @param x_weight The weights of variables in the objective function.
+        @param y_weight The weights of measurements in the objective function.
+
+        @return The matrix of estimated parameters
+        """
+        samples, n = x.shape
+        n = int(np.sqrt(n))
+
+        A = make_real_matrix(x_kroned)
+        dA = np.zeros(A.shape)
+        a = make_real_vector(x.reshape(x.size))
+        b = make_real_vector(y)
+
+        beta = cp.Variable(n * n * 2)
+
+        beta_lasso = None
+        for it in tqdm(range(self._max_iterations)):
+            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, self._lambda, beta)))
+            _solve_problem_with_solver(lasso_prob, verbose=self._verbose, solver=self._solver)
+
+            beta_lasso = sparse.csr_matrix(make_complex_vector(beta.value).reshape(n, n))
+            beta_lasso_kron = sparse.kron(np.ones(n), np.eye(n)).multiply(make_complex_vector(beta.value).reshape(1,n*n).repeat(n, 0))
+            real_beta_kron = sparse.kron(sparse.eye(samples), np.real(beta_lasso_kron))
+            imag_beta_kron = sparse.kron(sparse.eye(samples), np.imag(beta_lasso_kron))
+            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
+            if x_weight is not None and y_weight is not None:
+                ysy = underline_y.T @ y_weight @ underline_y
+                sys_matrix = sparse.csc_matrix(ysy + x_weight)
+                sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
+            else:
+                ysy = underline_y.T @ underline_y
+                sys_matrix = ysy + sparse.eye(2 * n * n * samples)
+                sys_vector = ysy @ a - underline_y.T @ b
+
+            da = spsolve(sys_matrix, sys_vector)
+
+            e_qp = make_complex_vector(da).reshape(x.shape)
+            dA = make_real_matrix(np.multiply(e_qp.repeat(n, 0), np.kron(np.ones((samples,n)), np.eye(n))))
 
             target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, self._lambda).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))

@@ -41,8 +41,13 @@ class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
     def _objective_function(x_vect: np.array, y_vect: np.array, beta, lambda_value):
         return cp.sum_squares(x_vect @ beta - y_vect) + lambda_value * cp.norm1(beta)
 
-    def fit(self, x: np.array, y: np.array):
-        x_tilde, y_tilde = self._vectorize_and_make_real(x, y)
+    def fit(self, x: np.array, y: np.array, vectored: bool = False):
+        if vectored:
+            x_tilde = make_real_matrix(x.copy())
+            y_tilde = make_real_vector(y.copy())
+        else:
+            x_tilde, y_tilde = self._vectorize_and_make_real(x, y)
+
         beta = cp.Variable(x_tilde.shape[1])
         lambda_param = cp.Parameter(nonneg=True)
         problem = cp.Problem(cp.Minimize(self._objective_function(x_tilde, y_tilde, beta, lambda_param)))

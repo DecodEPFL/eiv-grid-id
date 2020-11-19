@@ -75,3 +75,96 @@ def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd
         [sparse.diags(real_imag_covariance), sparse.diags(imag_variance)]
     ], format='csc')
     return sigma
+
+
+def var_power_real(measurements1: np.array, measurements2: np.array,
+                   sdm1: float, sda1: float, sdm2: float, sda2: float) -> np.array:
+    """Estimates the variance of the active power from voltages and/or current measurements, with noise in polar coordinates.
+    Without loss of generality, this can be use in both the cases:
+        @li Power flowing through a bus with voltage and current,
+        @li Power transmitted between two buses with start and end buses' voltages,
+        @li Power transmitted between two buses with start and end buses' currents.
+
+    @param measurements1 An array of voltages or current measurements.
+    @param measurements2 Another array of voltages or current measurements.
+    @param sdm1 Standard derivation of the noise on the magnitude of measurements1.
+    @param sda1 Standard derivation of the noise on the phase angle of measurements1.
+    @param sdm2 Standard derivation of the noise on the magnitude of measurements2.
+    @param sda2 Standard derivation of the noise on the phase angle of measurements2.
+    @return Returns the variance of the linearized noise on the active power (real element), estimated from current measurments.
+    """
+    mx, ax = np.abs(measurements1), np.angle(measurements1)
+    my, ay = np.abs(measurements2), np.angle(measurements2)
+    return (my*np.cos(ax-ay))**2*sdm1 + (mx*my*np.sin(ax-ay))**2*sda1 +\
+           (mx*np.cos(ax-ay))**2*sdm2 + (mx*my*np.sin(ax-ay))**2*sda2
+
+
+def var_power_imag(measurements1: np.array, measurements2: np.array,
+                   sdm1: float, sda1: float, sdm2: float, sda2: float) -> np.array:
+    """Estimates the variance of the reactive power from voltages and/or current measurements, with noise in polar coordinates.
+    Without loss of generality, this can be use in both the cases:
+        @li Power flowing through a bus with voltage and current,
+        @li Power transmitted between two buses with start and end buses' voltages,
+        @li Power transmitted between two buses with start and end buses' currents.
+
+    @param measurements1 An array of voltages or current measurements.
+    @param measurements2 Another array of voltages or current measurements.
+    @param sdm1 Standard derivation of the noise on the magnitude of measurements1.
+    @param sda1 Standard derivation of the noise on the phase angle of measurements1.
+    @param sdm2 Standard derivation of the noise on the magnitude of measurements2.
+    @param sda2 Standard derivation of the noise on the phase angle of measurements2.
+    @return Returns the variance of the linearized noise on the reactive power (imaginary element), estimated from current measurments.
+    """
+    mx, ax = np.abs(measurements1), np.angle(measurements1)
+    my, ay = np.abs(measurements2), np.angle(measurements2)
+    return (my*np.sin(ax-ay))**2*sdm1 + (mx*my*np.cos(ax-ay))**2*sda1 +\
+           (mx*np.sin(ax-ay))**2*sdm2 + (mx*my*np.cos(ax-ay))**2*sda2
+
+
+def cov_power(measurements1: np.array, measurements2: np.array,
+              sdm1: float, sda1: float, sdm2: float, sda2: float) -> np.array:
+    """Estimates the covariance between active and reactive powers from voltages and/or current measurements, with noise in polar coordinates.
+    Without loss of generality, this can be use in both the cases:
+        @li Power flowing through a bus with voltage and current,
+        @li Power transmitted between two buses with start and end buses' voltages,
+        @li Power transmitted between two buses with start and end buses' currents.
+
+    @param measurements1 An array of voltages or current measurements.
+    @param measurements2 Another array of voltages or current measurements.
+    @param sdm1 Standard derivation of the noise on the magnitude of measurements1.
+    @param sda1 Standard derivation of the noise on the phase angle of measurements1.
+    @param sdm2 Standard derivation of the noise on the magnitude of measurements2.
+    @param sda2 Standard derivation of the noise on the phase angle of measurements2.
+    @return Returns the covariance between the linearized noises on active and reactive powers, estimated from current measurments.
+    """
+    mx, ax = np.abs(measurements1), np.angle(measurements1)
+    my, ay = np.abs(measurements2), np.angle(measurements2)
+    return np.sin(ax-ay)*np.cos(ax-ay)*(my**2*sdm1 + mx**2*sdm2 - mx**2*my**2*(sda1 + sda2))
+
+
+def power_covariance(measurements1: np.array, measurements2: np.array,
+                     sdm1: float, sda1: float, sdm2: float, sda2: float) -> np.array:
+    """Estimates the covariance maxtrix of power from voltages and/or current measurements, with noise in polar coordinates.
+    Without loss of generality, this can be use in both the cases:
+        @li Power flowing through a bus with voltage and current,
+        @li Power transmitted between two buses with start and end buses' voltages,
+        @li Power transmitted between two buses with start and end buses' currents.
+
+    @param measurements1 An array of voltages or current measurements.
+    @param measurements2 Another array of voltages or current measurements.
+    @param sdm1 Standard derivation of the noise on the magnitude of measurements1.
+    @param sda1 Standard derivation of the noise on the phase angle of measurements1.
+    @param sdm2 Standard derivation of the noise on the magnitude of measurements2.
+    @param sda2 Standard derivation of the noise on the phase angle of measurements2.
+    @return Returns the block 2x2 covariance matrix with diagonal blocks of the power
+    """
+    measurement1_vect = vectorize_matrix(measurements1)
+    measurement2_vect = vectorize_matrix(measurements2)
+    real_variance = var_power_real(measurement1_vect, measurement2_vect, sdm1, sda1, sdm2, sda2)
+    imag_variance = var_power_imag(measurement1_vect, measurement2_vect, sdm1, sda1, sdm2, sda2)
+    covariance = cov_power(measurement1_vect, measurement2_vect, sdm1, sda1, sdm2, sda2)
+    sigma = sparse.bmat([
+        [sparse.diags(real_variance), sparse.diags(covariance)],
+        [sparse.diags(covariance), sparse.diags(imag_variance)]
+    ], format='csc')
+    return sigma
