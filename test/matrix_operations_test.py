@@ -1,7 +1,7 @@
 import numpy as np
 
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, unvectorize_matrix, \
-    make_complex_vector
+    make_complex_vector, transformation_matrix, duplication_matrix
 
 
 def test_make_real_matrix():
@@ -46,3 +46,23 @@ def test_make_complex_vector():
     v = np.array([1, 2, 3, 4, 5, 6])
     v_complex = np.array([1 + 4j, 2 + 5j, 3 + 6j])
     np.testing.assert_equal(make_complex_vector(v), v_complex)
+
+def test_transformation_matrix():
+    m = np.array([
+        [2, -1, -1],
+        [-1, 4, -3],
+        [-1, -3, 4],
+    ])
+    mv = np.array([2, -1, -1, 4, -3, 4])
+    v = np.array([1, 1, 3])
+    np.testing.assert_equal(mv, transformation_matrix(3) @ v)
+
+def test_duplication_matrix():
+    m = np.array([
+        [1, 2, 3],
+        [2, 4, 5],
+        [3, 5, 6],
+    ])
+    v = np.array([1, 2, 3, 4, 5, 6])
+    np.testing.assert_equal(vectorize_matrix(m), duplication_matrix(3) @ v)
+

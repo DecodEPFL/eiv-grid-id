@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix
+    unvectorize_matrix, duplication_matrix, transformation_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
 
@@ -116,7 +116,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
         self._admittance_matrix = beta_lasso
 
-    def fit_with_vectored_data(self, x: np.array, x_kroned: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None):
+    def fit_with_vectored_data(self, x: np.array, x_kroned: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None, enforce_y_cons: bool = False):
         """ Fits parameters to data using the Sparse-TLS method. The measurements are expected to be already vectorized,
         while the variables aren't, but they are supposed to be Kroneckered with an identity of size n.
 
@@ -130,37 +130,54 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         """
         samples, n = x.shape
         n = int(np.sqrt(n))
+        DT = duplication_matrix(n) @ transformation_matrix(n)
 
-        A = make_real_matrix(x_kroned)
+        if enforce_y_cons:
+            A = make_real_matrix(x_kroned @ DT)
+        else:
+            A = make_real_matrix(x_kroned)
         dA = np.zeros(A.shape)
         a = make_real_vector(x.reshape(x.size))
         b = make_real_vector(y)
 
-        beta = cp.Variable(n * n * 2)
+        if enforce_y_cons:
+            beta = cp.Variable(n * (n-1))
+        else:
+            beta = cp.Variable(n * n * 2)
+
+        if x_weight is None or y_weight is None:
+            y_weight = sparse.eye(2 * n * samples)
+            x_weight = sparse.eye(2 * n * n * samples)
 
         beta_lasso = None
         for it in tqdm(range(self._max_iterations)):
             lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, self._lambda, beta)))
             _solve_problem_with_solver(lasso_prob, verbose=self._verbose, solver=self._solver)
 
-            beta_lasso = sparse.csr_matrix(make_complex_vector(beta.value).reshape(n, n))
-            beta_lasso_kron = sparse.kron(np.ones(n), np.eye(n)).multiply(make_complex_vector(beta.value).reshape(1,n*n).repeat(n, 0))
+            if enforce_y_cons:
+                beta_full = DT @ make_complex_vector(beta.value)
+                beta_lasso = sparse.csr_matrix(beta_full.reshape(n, n))
+                beta_lasso_kron = sparse.kron(np.ones(n), np.eye(n)).multiply(beta_full.reshape(1, n * n).repeat(n, 0))
+            else:
+                beta_lasso = sparse.csr_matrix(make_complex_vector(beta.value).reshape(n, n))
+                beta_lasso_kron = sparse.kron(np.ones(n), np.eye(n)).multiply(
+                    make_complex_vector(beta.value).reshape(1,n*n).repeat(n, 0))
+
             real_beta_kron = sparse.kron(sparse.eye(samples), np.real(beta_lasso_kron))
             imag_beta_kron = sparse.kron(sparse.eye(samples), np.imag(beta_lasso_kron))
             underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
-            if x_weight is not None and y_weight is not None:
-                ysy = underline_y.T @ y_weight @ underline_y
-                sys_matrix = sparse.csc_matrix(ysy + x_weight)
-                sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
-            else:
-                ysy = underline_y.T @ underline_y
-                sys_matrix = ysy + sparse.eye(2 * n * n * samples)
-                sys_vector = ysy @ a - underline_y.T @ b
+
+            ysy = underline_y.T @ y_weight @ underline_y
+            sys_matrix = sparse.csc_matrix(ysy + x_weight)
+            sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
 
             da = spsolve(sys_matrix, sys_vector)
 
             e_qp = make_complex_vector(da).reshape(x.shape)
-            dA = make_real_matrix(np.multiply(e_qp.repeat(n, 0), np.kron(np.ones((samples,n)), np.eye(n))))
+            if enforce_y_cons:
+                dA = make_real_matrix(np.multiply(e_qp.repeat(n, 0), np.kron(np.ones((samples,n)), np.eye(n))) @ DT)
+            else:
+                dA = make_real_matrix(np.multiply(e_qp.repeat(n, 0), np.kron(np.ones((samples,n)), np.eye(n))))
 
             target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, self._lambda).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))

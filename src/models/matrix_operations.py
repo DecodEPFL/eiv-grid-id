@@ -28,3 +28,30 @@ def make_real_matrix(m: np.array) -> np.array:
         [np.real(m), -np.imag(m)],
         [np.imag(m), np.real(m)]
     ])
+
+def transformation_matrix(n):
+    res = np.zeros((int(n * (n+1) / 2), int(n * (n-1) / 2)))
+    row = 0
+    for i in range(n):
+        for j in range(n-i):
+            if j == 0:
+                res[row, row - i:(row - i + n - i - 1)] = 1
+                for k in range(i):
+                    res[row, i - 1 + sum(n-2-x for x in range(k))] = 1
+            else:
+                res[row, row-i-1] = -1
+            row = row + 1
+    res = res.astype('int')
+    return res
+
+def duplication_matrix(n):
+    res = np.zeros((int(n ** 2), int(n * (n + 1) / 2)))
+    for i in range(n):
+        for j in range(i+1):
+            u = j * n + i - int(j * (j + 1) / 2)
+            res[i*n+j, u] = 1
+            res[j*n+i, u] = 1
+    res = res.astype('int')
+    return res
+
+    return res
