@@ -65,4 +65,3 @@ def test_duplication_matrix():
     ])
     v = np.array([1, 2, 3, 4, 5, 6])
     np.testing.assert_equal(vectorize_matrix(m), duplication_matrix(3) @ v)
-
