@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix, duplication_matrix, transformation_matrix
+    unvectorize_matrix, duplication_matrix, transformation_matrix, dlasso_norm
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
 
@@ -36,9 +36,10 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 
 class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
-    def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, use_l1_penalty=True,
-                 verbose=False, solver=DEFAULT_SOLVER):
+    def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, use_dlasso=False,
+                 use_l1_penalty=True, verbose=False, solver=DEFAULT_SOLVER):
         GridIdentificationModel.__init__(self)
+        self._use_dlasso = use_dlasso
         self._use_l1_penalty = use_l1_penalty
         self._iterations = []
         self._solver = solver
@@ -59,7 +60,12 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
     def _lasso_target(self, b, A, dA, b_weight, lambda_value, beta):
         error = b - (A - dA) @ beta
         quadratic_loss = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
-        loss = quadratic_loss + lambda_value * cp.norm1(beta) if self._use_l1_penalty else quadratic_loss
+        if self._use_dlasso:
+            loss = quadratic_loss + lambda_value * dlasso_norm(beta)
+        elif self._use_l1_penalty:
+            loss = quadratic_loss + lambda_value * cp.norm1(beta)
+        else:
+            loss = quadratic_loss
         return loss
 
     def _full_target(self, b, A, da, dA, a_weight, b_weight, beta, lambda_value):
