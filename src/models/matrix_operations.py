@@ -36,8 +36,7 @@ def dlasso_norm(v: np.array, s: float = 0.01) -> float:
     # This is quasiconvex and still works with the descent according to P. Tseng,
     # “Convergence of a block coordinate descent method for nondifferentiable minimization,”
     # Journal of Optimization Theory and Applications, vol. 109, no. 3, pp. 475–494, Jun. 2001.
-    #return np.multiply(v,sp.special.erf(v / s)) #non-atomic
-    return cp.power(cp.sum(cp.power(cp.abs(v),1+s)),1/(1+s))
+    return np.multiply(v,sp.special.erf(v / s))
 
 
 def transformation_matrix(n):
