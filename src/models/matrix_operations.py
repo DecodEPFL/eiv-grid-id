@@ -38,6 +38,12 @@ def dlasso_norm(v: np.array, s: float = 0.01) -> float:
     # Journal of Optimization Theory and Applications, vol. 109, no. 3, pp. 475–494, Jun. 2001.
     return np.multiply(v,sp.special.erf(v / s))
 
+def lasso_grad(v: np.array) -> np.array:
+    return np.sign(v)
+
+def lasso_prox(v: np.array, p: float = 1):
+    return np.multiply(np.sign(v),(np.abs(v) - p).clip(min=0))
+
 
 def transformation_matrix(n):
     res = np.zeros((int(n * (n+1) / 2), int(n * (n-1) / 2)))

@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix, duplication_matrix, transformation_matrix, dlasso_norm
+    unvectorize_matrix, duplication_matrix, transformation_matrix, lasso_prox
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
 
@@ -68,7 +68,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             if self._prior is not None and self._prior_cov is None:
                 y_vector = y_vector - self._prior
             if self._l1_weights is None:
-                loss = loss + lambda_value * cp.norm1(beta)
+                loss = loss + lambda_value * cp.norm1(y_vector)
             else:
                 loss = loss + lambda_value * cp.norm1(self._l1_weights @ y_vector)
         if self._prior is not None and self._prior_cov is not None:
@@ -86,7 +86,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             if self._prior is not None and self._prior_cov is None:
                 y_vector = y_vector - self._prior
             if self._l1_weights is None:
-                loss = loss + lambda_value * cp.norm1(beta)
+                loss = loss + lambda_value * cp.norm1(y_vector)
             else:
                 loss = loss + lambda_value * cp.norm1(self._l1_weights @ y_vector)
         if self._prior is not None and self._prior_cov is not None:
@@ -164,6 +164,62 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
                 break
 
         self._admittance_matrix = beta_lasso
+
+
+    def gradient_fit(self, x: np.array, y: np.array, y_init: np.array, x_weight: np.array = None, y_weight: np.array = None, step_size: float = 1):
+        #initialization of parameters
+
+        #copy data
+        samples, n = x.shape
+
+        A = make_real_matrix(np.kron(np.eye(n), x))
+        dA = np.zeros(A.shape)
+        a = make_real_vector(vectorize_matrix(x))
+        da = np.zeros(a.shape)
+        b = make_real_vector(vectorize_matrix(y))
+        y = make_real_vector(vectorize_matrix(y_init))
+
+        #Use covariances if provided
+        if x_weight is None or y_weight is None:
+            y_weight = sparse.eye(2 * n * samples)
+            x_weight = sparse.eye(2 * n * samples)
+
+        # start iterating
+        best_target = None
+        for it in tqdm(range(self._max_iterations)):
+            #create \bar Y from y
+            gamma = unvectorize_matrix(make_complex_vector(y), (n, n))
+            real_beta_kron = sparse.kron(np.real(gamma).T, sparse.eye(samples))
+            imag_beta_kron = sparse.kron(np.imag(gamma).T, sparse.eye(samples))
+            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
+
+            #then solve da from a linear equation
+            ysy = underline_y.T @ y_weight @ underline_y
+            sys_matrix = sparse.csc_matrix(ysy + x_weight)
+            sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
+
+            da = spsolve(sys_matrix, sys_vector)
+
+            #create dA from da
+            e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
+            dA = make_real_matrix(np.kron(np.eye(n), e_qp))
+
+            dCdy = ( 2 * (dA - A).T @ y_weight @ (b - (A - dA) @ y) )# + self._lambda * lasso_grad(y) )# / np.sqrt(target + 1)
+
+            #descend
+            alpha = 1/(100*it/self._max_iterations + 1) /np.linalg.norm(dCdy)
+            y = lasso_prox(y - step_size[1] * dCdy* alpha, self._lambda * step_size[1]*alpha)# / (it + 1)
+
+            #update cost function
+            target = self._full_target(b, A, da, dA, x_weight, y_weight, y, self._lambda).value
+            if best_target is None or target < best_target:
+                self._admittance_matrix = gamma
+                best_target = target
+                self._iterations.append(IterationStatus(it, gamma, target))
+
+            #if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
+            #    break
+
 
 
     def fit_with_vectored_data(self, x: np.array, x_kroned: np.array, y: np.array,
