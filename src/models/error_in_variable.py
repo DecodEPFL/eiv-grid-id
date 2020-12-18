@@ -10,6 +10,7 @@ from src.models.abstract_models import GridIdentificationModel, UnweightedModel,
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
     unvectorize_matrix, duplication_matrix, transformation_matrix, lasso_prox
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
+from src.identification.error_metrics import fro_error
 
 
 @dataclass
@@ -47,6 +48,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         self._solver = solver
         self._verbose = verbose
         self._lambda = lambda_value
+        self._total_l1 = None
         self._abs_tol = abs_tol
         self._rel_tol = rel_tol
         self._max_iterations = max_iterations
@@ -59,38 +61,31 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
     def _efficient_quadratic(v, m):
         return cp.sum_squares(v) if m is None else cp.quad_form(v, m)
 
+    def _reg_penalty(self, lambda_value, beta):
+        pen = 0
+        if self._use_l1_penalty:
+            y_vector = beta
+            if self._prior is not None and self._prior_cov is None:
+                y_vector = y_vector - self._prior
+            if self._l1_weights is None:
+                pen = pen + lambda_value * cp.norm1(y_vector)
+            else:
+                pen = pen + lambda_value * cp.norm1(self._l1_weights @ y_vector)
+        if self._prior is not None and self._prior_cov is not None:
+            pen = pen + SparseTotalLeastSquare._efficient_quadratic(beta - self._prior, self._prior_cov)
+        return pen
+
     def _lasso_target(self, b, A, dA, b_weight, lambda_value, beta):
         error = b - (A - dA) @ beta
         quadratic_loss = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
-        loss = quadratic_loss
-        if self._use_l1_penalty:
-            y_vector = beta
-            if self._prior is not None and self._prior_cov is None:
-                y_vector = y_vector - self._prior
-            if self._l1_weights is None:
-                loss = loss + lambda_value * cp.norm1(y_vector)
-            else:
-                loss = loss + lambda_value * cp.norm1(self._l1_weights @ y_vector)
-        if self._prior is not None and self._prior_cov is not None:
-            loss = loss + SparseTotalLeastSquare._efficient_quadratic(beta - self._prior, self._prior_cov)
+        loss = quadratic_loss + self._reg_penalty(lambda_value, beta)
         return loss
 
     def _full_target(self, b, A, da, dA, a_weight, b_weight, beta, lambda_value):
-        self.tmp = (b.shape, A.shape, dA.shape, beta.shape)
         error = b - (A - dA) @ beta
         quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
         quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, a_weight)
-        loss = quadratic_loss_a + quadratic_loss_b
-        if self._use_l1_penalty:
-            y_vector = beta
-            if self._prior is not None and self._prior_cov is None:
-                y_vector = y_vector - self._prior
-            if self._l1_weights is None:
-                loss = loss + lambda_value * cp.norm1(y_vector)
-            else:
-                loss = loss + lambda_value * cp.norm1(self._l1_weights @ y_vector)
-        if self._prior is not None and self._prior_cov is not None:
-            loss = loss + SparseTotalLeastSquare._efficient_quadratic(beta - self._prior, self._prior_cov)
+        loss = quadratic_loss_a + quadratic_loss_b + self._reg_penalty(lambda_value, beta)
         return loss
 
     def _is_stationary_point(self, f_cur, f_prev) -> bool:
@@ -106,6 +101,8 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         dA = np.zeros(A.shape)
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(y))
+
+        l = self._lambda
 
         #Use covariances if provided
         if x_weight is None or y_weight is None:
@@ -136,8 +133,15 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         beta_lasso = None
         for it in tqdm(range(self._max_iterations)):
             #first solve y+ = lasso
-            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, self._lambda, beta)))
+            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, l, beta)))
             _solve_problem_with_solver(lasso_prob, verbose=self._verbose, solver=self._solver)
+
+            #update lambda if constraint defined, method of multipliers
+            if self._total_l1 is not None:
+                l = l + self._total_l1[0] * (self._reg_penalty(l,beta.value).value/l - self._total_l1[1])
+                if l <= self._total_l1[0]*self._lambda:
+                    l = self._total_l1[0]*self._lambda
+                self.tmp = l
 
             #create \bar Y from y
             beta_lasso = unvectorize_matrix(make_complex_vector(beta.value), (n, n))
@@ -157,10 +161,12 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
             #update cost function
-            target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, self._lambda).value
+            target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, l).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))
 
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
+                break
+            if it > 0 and fro_error(self.iterations[it - 1].fitted_parameters, beta_lasso) < self._abs_tol:
                 break
 
         self._admittance_matrix = beta_lasso
