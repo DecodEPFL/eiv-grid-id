@@ -70,32 +70,3 @@ def duplication_matrix(n):
             res[j*n+i, u] = 1
     res = res.astype('int')
     return res
-
-
-def cross_multiply_measurements(measurement: np.array) -> np.array:
-    """Cross multiplies each element each row of an array with every other. Does not multiply elements of different rows.
-
-    @param measurement An array of measurements.
-
-    @return an array in which each row is the vectorized matrix of cross multiplications
-    """
-    return np.multiply(np.tile(measurement, (1, measurement.shape[1])),
-                np.repeat(measurement, measurement.shape[1], axis=1).conj())
-
-
-def make_measurements_matrix(measurement: np.array) -> np.array:
-    """Cross multiplies each element each row of an array with every other. Does not multiply elements of different rows.
-    Create an array of block rows with diagonal matrices as elements. Each diagonal contains one element of the original
-    row of measurements, multiplied by all others.
-
-    @param measurement An array of measurements.
-
-    @return an array in which each block row is formed by the vectorized matrix of cross multiplications
-    """
-
-    n = measurement.shape[1]
-    mat1 = np.kron(measurement, np.eye(n)).conj()
-    mat2 = np.tile(measurement, (1, n)).repeat(n, 0)
-
-    return np.multiply(mat1, mat2)
-
