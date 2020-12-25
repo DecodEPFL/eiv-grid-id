@@ -51,6 +51,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         self._lambda = lambda_value
         self.l1_target = float(-1)
         self.l1_multiplier_step_size = float(0)
+        self.cons_multiplier_step_size = float(0)
         self._abs_tol = abs_tol
         self._rel_tol = rel_tol
         self._max_iterations = max_iterations
@@ -65,7 +66,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
     @staticmethod
     def _efficient_quadratic(v, m):
-        return cp.sum_squares(v) if m is None else cp.quad_form(v, m)
+        return v.T @ v if m is None else v.T @ m @ v
 
     def _reg_penalty(self, lambda_value, beta):
         pen = 0
@@ -74,9 +75,9 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             if self._l_prior is not None:
                 y_vector = y_vector - self._l_prior
             if self._l_prior_mat is None:
-                pen = pen + lambda_value * cp.norm1(y_vector)
+                pen = pen + lambda_value * np.sum(np.abs(y_vector))
             else:
-                pen = pen + lambda_value * cp.norm1(self._l_prior_mat @ y_vector)
+                pen = pen + lambda_value * np.sum(np.abs(self._l_prior_mat @ y_vector))
         if self._g_prior is not None:
             pen = pen + SparseTotalLeastSquare._efficient_quadratic(beta - self._g_prior, self._g_prior_mat)
         return pen
@@ -109,7 +110,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         return
 
 
-    def fit(self, x: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None, y_init: np.array = None):
+    def fit(self, x: np.array, y: np.array, x_weight: np.array, y_weight: np.array, y_init: np.array):
         #initialization of parameters
 
         #copy data
@@ -127,43 +128,17 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             y_weight = sparse.eye(2 * n * samples)
             x_weight = sparse.eye(2 * n * samples)
 
-        # Initialize da and dA with a provided y, instead of simply 0
-        if y_init is not None:
-            real_beta_kron = sparse.kron(np.real(y_init).T, sparse.eye(samples))
-            imag_beta_kron = sparse.kron(np.imag(y_init).T, sparse.eye(samples))
-            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
-
-            #then solve da from a linear equation
-            ysy = underline_y.T @ y_weight @ underline_y
-            sys_matrix = sparse.csc_matrix(ysy + x_weight)
-            sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
-
-            da = spsolve(sys_matrix, sys_vector)
-
-            #create dA from da
-            e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
-            dA = make_real_matrix(np.kron(np.eye(n), e_qp))
-
-        #create cvxpy variables
-        beta = cp.Variable(n * n * 2)
+        y = make_real_vector(vectorize_matrix(y_init))
+        y_mat = y_init
+        z = y
+        c = np.zeros(y.shape)
 
         # start iterating
         beta_lasso = None
         for it in tqdm(range(self._max_iterations)):
-            #first solve y+ = lasso
-            lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, l, beta)))
-            _solve_problem_with_solver(lasso_prob, verbose=self._verbose, solver=self._solver)
-
-            #update lambda if constraint defined, method of multipliers
-            if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l,beta.value).value/l - self.l1_target)
-                if l <= self.l1_multiplier_step_size * self._lambda:
-                    l = self.l1_multiplier_step_size * self._lambda
-
             #create \bar Y from y
-            beta_lasso = unvectorize_matrix(make_complex_vector(beta.value), (n, n))
-            real_beta_kron = sparse.kron(np.real(beta_lasso).T, sparse.eye(samples))
-            imag_beta_kron = sparse.kron(np.imag(beta_lasso).T, sparse.eye(samples))
+            real_beta_kron = sparse.kron(np.real(y_mat).T, sparse.eye(samples))
+            imag_beta_kron = sparse.kron(np.imag(y_mat).T, sparse.eye(samples))
             underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
 
             #then solve da from a linear equation
@@ -177,13 +152,29 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
+            #update y
+            AmdA = (A - dA)
+            iASA = (((1 / 2) * self.cons_multiplier_step_size) * np.eye(n*n*2) + (AmdA.T @ y_weight @ AmdA))
+            ASb_vec = AmdA.T @ y_weight @ b + (z - c) * self.cons_multiplier_step_size
+            y = spsolve(iASA, ASb_vec)
+
+            z = lasso_prox(c + y, l / self.cons_multiplier_step_size)
+            c = c + (y - z)
+
+            #update lambda
+            if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
+                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l, z)/l - self.l1_target)
+                if l <= self.l1_multiplier_step_size * self._lambda:
+                    l = self.l1_multiplier_step_size * self._lambda
+
             #update cost function
-            target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, l).value
-            self._iterations.append(IterationStatus(it, beta_lasso, target))
+            y_mat = unvectorize_matrix(make_complex_vector(y), (n,n))
+            target = self._full_target(b, A, da, dA, x_weight, y_weight, y, l)
+            self._iterations.append(IterationStatus(it, y_mat, target))
 
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
-            if it > 0 and fro_error(self.iterations[it - 1].fitted_parameters, beta_lasso) < self._abs_tol:
-                break
+            #if it > 0 and fro_error(self.iterations[it - 1].fitted_parameters, y_mat) < self._abs_tol:
+            #    break
 
-        self._admittance_matrix = beta_lasso
+        self._admittance_matrix = y_mat
