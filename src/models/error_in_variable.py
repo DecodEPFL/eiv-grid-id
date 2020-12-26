@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix, duplication_matrix, transformation_matrix, lasso_prox
+    unvectorize_matrix, duplication_matrix, transformation_matrix, lasso_prox, l0_prox, lq_prox
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 from src.identification.error_metrics import fro_error
 
@@ -38,9 +38,9 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
     def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50,
-                 use_l1_penalty=True, verbose=False, solver=DEFAULT_SOLVER):
+                 penalty=1, verbose=False, solver=DEFAULT_SOLVER):
         GridIdentificationModel.__init__(self)
-        self._use_l1_penalty = use_l1_penalty
+        self._penalty = penalty
         self._l_prior = None
         self._l_prior_mat = None
         self._g_prior = None
@@ -70,14 +70,14 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
     def _reg_penalty(self, lambda_value, beta):
         pen = 0
-        if self._use_l1_penalty:
+        if self._penalty > 0:
             y_vector = beta
             if self._l_prior is not None:
                 y_vector = y_vector - self._l_prior
             if self._l_prior_mat is None:
-                pen = pen + lambda_value * np.sum(np.abs(y_vector))
+                pen = pen + lambda_value * np.sum(np.power(np.abs(y_vector),self._penalty))
             else:
-                pen = pen + lambda_value * np.sum(np.abs(self._l_prior_mat @ y_vector))
+                pen = pen + lambda_value * np.sum(np.power(np.abs(self._l_prior_mat @ y_vector),self._penalty))
         if self._g_prior is not None:
             pen = pen + SparseTotalLeastSquare._efficient_quadratic(beta - self._g_prior, self._g_prior_mat)
         return pen
@@ -158,14 +158,14 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             ASb_vec = AmdA.T @ y_weight @ b + (z - c) * self.cons_multiplier_step_size
             y = spsolve(iASA, ASb_vec)
 
-            z = lasso_prox(c + y, l / self.cons_multiplier_step_size)
+            z = lq_prox(c + y, l / self.cons_multiplier_step_size, self._penalty)
             c = c + (y - z)
 
             #update lambda
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l, z)/l - self.l1_target)
-                if l <= self.l1_multiplier_step_size * self._lambda:
-                    l = self.l1_multiplier_step_size * self._lambda
+                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l, y)/l - self.l1_target)
+                if l <= 0:#self.l1_multiplier_step_size * self._lambda:
+                    l = 0#self.l1_multiplier_step_size * self._lambda
 
             #update cost function
             y_mat = unvectorize_matrix(make_complex_vector(y), (n,n))

@@ -44,6 +44,16 @@ def lasso_grad(v: np.array) -> np.array:
 def lasso_prox(v: np.array, p: float = 1):
     return np.multiply(np.sign(v),(np.abs(v) - p).clip(min=0))
 
+def l0_prox(v: np.array, p: float = 1):
+    v[np.square(v) < p/2] = 0
+    return v
+
+def lq_prox(v: np.array, p: float = 1, q: float = 0.5):
+    tau = pow(2*p*(1-q), 1/(2-q)) + p*q*pow(2*p*(1-q), (q-1)/(2-q))
+    v = np.piecewise(v, [np.abs(v) <= tau, np.abs(v) > tau], [0,
+                     lambda v: np.multiply(np.sign(v),(np.abs(v) - p*q*np.power(np.abs(v),q-1)))])
+    return v
+
 
 def transformation_matrix(n):
     res = np.zeros((int(n * (n+1) / 2), int(n * (n-1) / 2)))
