@@ -41,10 +41,10 @@ def dlasso_norm(v: np.array, s: float = 0.01) -> float:
 def lasso_grad(v: np.array) -> np.array:
     return np.sign(v)
 
-def lasso_prox(v: np.array, p: float = 1):
+def lasso_prox(v: np.array, p = 1):
     return np.multiply(np.sign(v),(np.abs(v) - p).clip(min=0))
 
-def l0_prox(v: np.array, p: float = 1):
+def l0_prox(v: np.array, p = 1):
     v[np.square(v) < p/2] = 0
     return v
 

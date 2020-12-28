@@ -38,7 +38,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
     def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50,
-                 penalty=1, verbose=False, solver=DEFAULT_SOLVER):
+                 penalty=1.0, verbose=False, solver=DEFAULT_SOLVER):
         GridIdentificationModel.__init__(self)
         self._penalty = penalty
         self._l_prior = None
@@ -96,7 +96,8 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         return loss
 
     def _is_stationary_point(self, f_cur, f_prev) -> bool:
-        return np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol
+        return (np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol) \
+                and f_prev >= f_cur
 
     def set_prior(self, p_mean: np.array, p_type: str = LAPLACE, p_var: np.array = None):
         if p_type == self.LAPLACE:
@@ -134,7 +135,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         c = np.zeros(y.shape)
 
         # start iterating
-        beta_lasso = None
+        self.tmp = []
         for it in tqdm(range(self._max_iterations)):
             #create \bar Y from y
             real_beta_kron = sparse.kron(np.real(y_mat).T, sparse.eye(samples))
@@ -158,12 +159,19 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             ASb_vec = AmdA.T @ y_weight @ b + (z - c) * self.cons_multiplier_step_size
             y = spsolve(iASA, ASb_vec)
 
-            z = lq_prox(c + y, l / self.cons_multiplier_step_size, self._penalty)
+            t_mat = self._l_prior_mat if self._l_prior_mat is not None else np.eye(z.size)
+            l_shift = self._l_prior if self._l_prior is not None else np.zeros(z.shape)
+
+
+            z = lasso_prox(c + y - self._l_prior, np.diag(self._l_prior_mat) @
+                           (np.ones((self._l_prior.size,1)) * l / self.cons_multiplier_step_size))
             c = c + (y - z)
+
+            self.tmp.append(l)
 
             #update lambda
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l, y)/l - self.l1_target)
+                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(z)) - self.l1_target)
                 if l <= 0:#self.l1_multiplier_step_size * self._lambda:
                     l = 0#self.l1_multiplier_step_size * self._lambda
 
