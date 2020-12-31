@@ -162,16 +162,13 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             t_mat = self._l_prior_mat if self._l_prior_mat is not None else np.eye(z.size)
             l_shift = self._l_prior if self._l_prior is not None else np.zeros(z.shape)
 
+            z = lasso_prox(c + y - l_shift, t_mat @ (np.ones(l_shift.size) * l / self.cons_multiplier_step_size))
 
-            z = lasso_prox(c + y - self._l_prior, np.diag(self._l_prior_mat) @
-                           (np.ones((self._l_prior.size,1)) * l / self.cons_multiplier_step_size))
             c = c + (y - z)
-
-            self.tmp.append(l)
 
             #update lambda
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(z)) - self.l1_target)
+                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
                 if l <= 0:#self.l1_multiplier_step_size * self._lambda:
                     l = 0#self.l1_multiplier_step_size * self._lambda
 
