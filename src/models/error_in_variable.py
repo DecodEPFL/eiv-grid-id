@@ -55,7 +55,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         self._rel_tol = rel_tol
         self._max_iterations = max_iterations
 
-    #static properties
+    # static properties
     LAPLACE = "Laplace"
     GAUSS = "Gauss"
 
@@ -108,11 +108,11 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
                 self._g_prior_mat = p_var
         return
 
+    def fit(self, x: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None,
+            y_init: np.array = None):
+        # initialization of parameters
 
-    def fit(self, x: np.array, y: np.array, x_weight: np.array = None, y_weight: np.array = None, y_init: np.array = None):
-        #initialization of parameters
-
-        #copy data
+        # copy data
         samples, n = x.shape
 
         A = make_real_matrix(np.kron(np.eye(n), x))
@@ -122,7 +122,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
         l = self._lambda
 
-        #Use covariances if provided
+        # Use covariances if provided
         if x_weight is None or y_weight is None:
             y_weight = sparse.eye(2 * n * samples)
             x_weight = sparse.eye(2 * n * samples)
@@ -133,51 +133,51 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             imag_beta_kron = sparse.kron(np.imag(y_init).T, sparse.eye(samples))
             underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
 
-            #then solve da from a linear equation
+            # then solve da from a linear equation
             ysy = underline_y.T @ y_weight @ underline_y
             sys_matrix = sparse.csc_matrix(ysy + x_weight)
             sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
 
             da = spsolve(sys_matrix, sys_vector)
 
-            #create dA from da
+            # create dA from da
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
-        #create cvxpy variables
+        # create cvxpy variables
         beta = cp.Variable(n * n * 2)
 
         # start iterating
         beta_lasso = None
         for it in tqdm(range(self._max_iterations)):
-            #first solve y+ = lasso
+            # first solve y+ = lasso
             lasso_prob = cp.Problem(cp.Minimize(self._lasso_target(b, A, dA, y_weight, l, beta)))
             _solve_problem_with_solver(lasso_prob, verbose=self._verbose, solver=self._solver)
 
-            #update lambda if constraint defined, method of multipliers
+            # update lambda if constraint defined, method of multipliers
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l,beta.value).value/l - self.l1_target)
+                l = l + self.l1_multiplier_step_size * (self._reg_penalty(l, beta.value).value / l - self.l1_target)
                 if l <= self.l1_multiplier_step_size * self._lambda:
                     l = self.l1_multiplier_step_size * self._lambda
 
-            #create \bar Y from y
+            # create \bar Y from y
             beta_lasso = unvectorize_matrix(make_complex_vector(beta.value), (n, n))
             real_beta_kron = sparse.kron(np.real(beta_lasso).T, sparse.eye(samples))
             imag_beta_kron = sparse.kron(np.imag(beta_lasso).T, sparse.eye(samples))
             underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
 
-            #then solve da from a linear equation
+            # then solve da from a linear equation
             ysy = underline_y.T @ y_weight @ underline_y
             sys_matrix = sparse.csc_matrix(ysy + x_weight)
             sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
 
             da = spsolve(sys_matrix, sys_vector)
 
-            #create dA from da
+            # create dA from da
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
-            #update cost function
+            # update cost function
             target = self._full_target(b, A, da, dA, x_weight, y_weight, beta.value, l).value
             self._iterations.append(IterationStatus(it, beta_lasso, target))
 
