@@ -24,4 +24,4 @@ dependencies:
   - pip:
       - pandapower==2.4.0
       - nbstripout==0.3.9
-      - mlflow==1.11
+      - mlflow==1.13.1
