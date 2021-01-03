@@ -154,6 +154,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
             #update y
+            """
             AmdA = (A - dA)
             iASA = (((1 / 2) * self.cons_multiplier_step_size) * np.eye(n*n*2) + (AmdA.T @ y_weight @ AmdA))
             ASb_vec = AmdA.T @ y_weight @ b + (z - c) * self.cons_multiplier_step_size
@@ -165,6 +166,15 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             z = lasso_prox(c + y - l_shift, t_mat @ (np.ones(l_shift.size) * l / self.cons_multiplier_step_size))
 
             c = c + (y - z)
+            """
+
+            AmdA = (A - dA)
+            z = [(1/i**2 if i > 0 else 0) for i in lasso_prox(np.abs(y),self.cons_multiplier_step_size)]
+            iASA = (((1 / 2) * l) * np.diag(z) + (AmdA.T @ y_weight @ AmdA))
+            ASb_vec = AmdA.T @ y_weight @ b
+            y = spsolve(iASA, ASb_vec)
+
+            self.tmp.append(l)
 
             #update lambda
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
