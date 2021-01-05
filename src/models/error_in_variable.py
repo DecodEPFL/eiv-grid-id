@@ -133,6 +133,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         y_mat = y_init
         z = y
         c = np.zeros(y.shape)
+        z = [(1/i**2 if i > 0 else 0) for i in lasso_prox(np.abs(y),self.cons_multiplier_step_size)]
 
         # start iterating
         self.tmp = []
@@ -168,9 +169,11 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             c = c + (y - z)
             """
 
+            #z = [(1/i if i > self.cons_multiplier_step_size else 0) for i in np.abs(y)]
+            #z = np.divide(1, np.abs(y) + self.cons_multiplier_step_size)
+            z = [(1/(i + self.cons_multiplier_step_size) if i > 0 else 0) for i in np.abs(y)]
             AmdA = (A - dA)
-            z = [(1/i**2 if i > 0 else 0) for i in lasso_prox(np.abs(y),self.cons_multiplier_step_size)]
-            iASA = (((1 / 2) * l) * np.diag(z) + (AmdA.T @ y_weight @ AmdA))
+            iASA = l * np.diag(z) * np.diag(z) + (AmdA.T @ y_weight @ AmdA)
             ASb_vec = AmdA.T @ y_weight @ b
             y = spsolve(iASA, ASb_vec)
 
