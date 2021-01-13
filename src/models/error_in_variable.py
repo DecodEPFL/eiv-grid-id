@@ -171,24 +171,24 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
             #z = [(1/i if i > self.cons_multiplier_step_size else 0) for i in np.abs(y)]
             #z = np.divide(1, np.abs(y) + self.cons_multiplier_step_size)
-            z = [(1/(i + self.cons_multiplier_step_size) if i > 0 else 0) for i in np.abs(y)]
+            z = np.array([(1/(i + self.cons_multiplier_step_size) if i is not 0 else 0) for i in y])
             AmdA = (A - dA)
-            iASA = l * np.diag(z) * np.diag(z) + (AmdA.T @ y_weight @ AmdA)
+            iASA = l * np.diag(z) @ np.diag(z) + (AmdA.T @ y_weight @ AmdA)
             ASb_vec = AmdA.T @ y_weight @ b
             y = spsolve(iASA, ASb_vec)
 
             self.tmp.append(l)
 
-            #update lambda
-            if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
-                if l <= 0:#self.l1_multiplier_step_size * self._lambda:
-                    l = 0#self.l1_multiplier_step_size * self._lambda
-
             #update cost function
             y_mat = unvectorize_matrix(make_complex_vector(y), (n,n))
             target = self._full_target(b, A, da, dA, x_weight, y_weight, y, l)
             self._iterations.append(IterationStatus(it, y_mat, target))
+
+            #update lambda such that the cost function still decreases
+            if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
+                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
+                if l <= 0:#self.l1_multiplier_step_size * self._lambda:
+                    l = 0#self.l1_multiplier_step_size * self._lambda
 
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break

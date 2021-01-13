@@ -10,6 +10,56 @@ from pandapower.timeseries import OutputWriter, run_timeseries
 
 from conf.conf import SIM_DIR
 
+from src.simulation.load_profile import BusData
+
+class NetData(pp.pandapowerNet):
+    """
+    aa
+    """
+    def __init__(self, ns: list = [], ls: list = []):
+        pp.pandapowerNet.__init__(self, pp.create_empty_network("net"))
+        self.create_buses(ns)
+        self.create_lines(ls)
+
+    def create_bus(self, i: int, t: int, p: float, q: float, kv: float):
+        bus = pp.create_bus(self, kv, name=str(i), index=i)
+        if t is 1:
+            pp.create_load(self, bus, p, q, name="("+str(i)+")", index=i)
+        elif t is 3:
+            pp.create_ext_grid(self, bus)
+        return self
+
+    def create_buses(self, ns: list):
+        for n in ns:
+            bus = pp.create_bus(self, n.baseKV, name=str(n.id), index=n.id)
+            if n.type is 1:
+                pp.create_load(self, bus, n.Pd, n.Qd, name="("+str(n.id)+")", index=n.id)
+            if n.type is 3:
+                pp.create_ext_grid(self, bus)
+        return self
+
+    def create_line(self, f: int, t: int, r: float, x: float, l: float = 1):
+        if f > t:
+            f, t = t, f
+        pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", f),
+                                       pp.get_element_index(self, "bus", t),
+                                       l, r/l, x/l, 0, 1e10, "("+str(f)+","+str(t)+")")
+        return self
+
+    def create_lines(self, ls: list):
+        for l in ls:
+            if l.start_bus > l.end_bus:
+                l.start_bus, l.end_bus = l.end_bus, l.start_bus
+
+            pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", str(l.start_bus)),
+                                           pp.get_element_index(self, "bus", str(l.end_bus)),
+                                           l.length, l.R/l.length, l.X/l.length, 0, 1e10,
+                                           "("+str(l.start_bus)+","+str(l.end_bus)+")")
+        return self
+
+
+
+
 
 @dataclass
 class SimulationResult(object):

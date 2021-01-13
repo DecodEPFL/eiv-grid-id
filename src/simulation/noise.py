@@ -34,3 +34,4 @@ def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: f
     noisy_phase = phase + phase_noise
     noisy_measurement = noisy_magnitude * np.exp(1j * noisy_phase)
     return noisy_measurement
+
