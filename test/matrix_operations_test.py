@@ -1,7 +1,7 @@
 import numpy as np
 
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, unvectorize_matrix, \
-    make_complex_vector, transformation_matrix, duplication_matrix, cross_multiply_measurements, make_measurements_matrix
+    make_complex_vector, transformation_matrix, duplication_matrix
 
 
 def test_make_real_matrix():
@@ -48,32 +48,11 @@ def test_make_complex_vector():
     np.testing.assert_equal(make_complex_vector(v), v_complex)
 
 
-def test_cross_multiply_measurements():
-    v = np.array([[1, 2, 3],[4, 5, 6]])
-    m = np.array([[1, 2, 3, 2, 4, 6, 3, 6, 9],[16, 20, 24, 20, 25, 30, 24, 30, 36]])
-    np.testing.assert_equal(cross_multiply_measurements(v), m)
-
-
-def test_make_measurements_matrix():
-    v = np.array([[1, 2, 3],[4, 5, 6]])
-    m = np.array([[1, 0, 0, 2, 0, 0, 3, 0, 0],
-                  [0, 2, 0, 0, 4, 0, 0, 6, 0],
-                  [0, 0, 3, 0, 0, 6, 0, 0, 9],
-                  [16, 0, 0, 20, 0, 0, 24, 0, 0],
-                  [0, 20, 0, 0, 25, 0, 0, 30, 0],
-                  [0, 0, 24, 0, 0, 30, 0, 0, 36]])
-    np.testing.assert_equal(make_measurements_matrix(v), m)
-
-
 def test_transformation_matrix():
-    m = np.array([
-        [2, -1, -1],
-        [-1, 4, -3],
-        [-1, -3, 4],
-    ])
     mv = np.array([2, -1, -1, 4, -3, 4])
     v = np.array([1, 1, 3])
     np.testing.assert_equal(mv, transformation_matrix(3) @ v)
+
 
 def test_duplication_matrix():
     m = np.array([
@@ -83,5 +62,3 @@ def test_duplication_matrix():
     ])
     v = np.array([1, 2, 3, 4, 5, 6])
     np.testing.assert_equal(vectorize_matrix(m), duplication_matrix(3) @ v)
-
-test_make_measurements_matrix()

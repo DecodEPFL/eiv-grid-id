@@ -2,7 +2,6 @@ from typing import Tuple
 
 import numpy as np
 import scipy as sp
-import cvxpy as cp
 
 
 def vectorize_matrix(m: np.array) -> np.array:
@@ -36,26 +35,28 @@ def dlasso_norm(v: np.array, s: float = 0.01) -> float:
     # This is quasiconvex and still works with the descent according to P. Tseng,
     # “Convergence of a block coordinate descent method for nondifferentiable minimization,”
     # Journal of Optimization Theory and Applications, vol. 109, no. 3, pp. 475–494, Jun. 2001.
-    return np.multiply(v,sp.special.erf(v / s))
+    return np.multiply(v, sp.special.erf(v / s))
+
 
 def lasso_grad(v: np.array) -> np.array:
     return np.sign(v)
 
+
 def lasso_prox(v: np.array, p: float = 1):
-    return np.multiply(np.sign(v),(np.abs(v) - p).clip(min=0))
+    return np.multiply(np.sign(v), (np.abs(v) - p).clip(min=0))
 
 
 def transformation_matrix(n):
-    res = np.zeros((int(n * (n+1) / 2), int(n * (n-1) / 2)))
+    res = np.zeros((int(n * (n + 1) / 2), int(n * (n - 1) / 2)))
     row = 0
     for i in range(n):
-        for j in range(n-i):
+        for j in range(n - i):
             if j == 0:
                 res[row, row - i:(row - i + n - i - 1)] = 1
                 for k in range(i):
-                    res[row, i - 1 + sum(n-2-x for x in range(k))] = 1
+                    res[row, i - 1 + sum(n - 2 - x for x in range(k))] = 1
             else:
-                res[row, row-i-1] = -1
+                res[row, row - i - 1] = -1
             row = row + 1
     res = res.astype('int')
     return res
@@ -64,9 +65,9 @@ def transformation_matrix(n):
 def duplication_matrix(n):
     res = np.zeros((int(n ** 2), int(n * (n + 1) / 2)))
     for i in range(n):
-        for j in range(i+1):
+        for j in range(i + 1):
             u = j * n + i - int(j * (j + 1) / 2)
-            res[i*n+j, u] = 1
-            res[j*n+i, u] = 1
+            res[i * n + j, u] = 1
+            res[j * n + i, u] = 1
     res = res.astype('int')
     return res

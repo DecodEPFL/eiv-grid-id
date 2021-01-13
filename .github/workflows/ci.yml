@@ -13,15 +13,16 @@ jobs:
       - name: Cache conda
         uses: actions/cache@v1
         env:
-          # Increase this value to reset cache if etc/example-environment.yml has not changed
+          # Increase this value to reset cache if environment.yml has not changed
           CACHE_NUMBER: 0
         with:
           path: ~/conda_pkgs_dir
           key: ${{ runner.os }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles('environment.yml') }}
 
       - name: Setup Miniconda
-        uses: goanpeca/setup-miniconda@v1.5.0
+        uses: conda-incubator/setup-miniconda@v2
         with:
+          activate-environment: eiv-grid-id
           auto-update-conda: true
           environment-file: environment.yml
           auto-activate-base: false
