@@ -100,9 +100,18 @@ controlled_net.bus
 # %%
 
 current = np.array(voltage @ y_bus)
+voltage = voltage - np.mean(voltage)
+current = current - np.mean(current)
 noisy_voltage = add_polar_noise_to_measurement(voltage, voltage_magnitude_sd, phase_sd)
 noisy_current = add_polar_noise_to_measurement(current, current_magnitude_sd * pmu_ratings, phase_sd)
 voltage_error, current_error = noisy_voltage - voltage, noisy_current - current
+
+# %%
+
+sns_plot = sns.heatmap(np.abs(y_bus))
+fig = sns_plot.get_figure()
+fig.savefig(DATA_DIR / "y_bus.png")
+plt.clf()
 
 # %%
 
@@ -149,9 +158,9 @@ plt.clf()
 # %%
 
 with mlflow.start_run(run_name='S-TLS with covariance'):
-    max_iterations = 50
-    abs_tol = 0.1
-    rel_tol = 10e-9
+    max_iterations = 10000
+    abs_tol = 1e3
+    rel_tol = 10e-8
     solver = cp.GUROBI
     use_cov_matrix = True
     pen_degree = 1.0
@@ -166,17 +175,17 @@ with mlflow.start_run(run_name='S-TLS with covariance'):
     print("Starting matrix inversion...")
 
     if max_iterations > 0:
-        inv_sigma_current = sparse.linalg.inv(sigma_current)
-        inv_sigma_voltage = sparse.linalg.inv(sigma_voltage)
+        inv_sigma_current = sparse.linalg.inv(sigma_current)#/1e8
+        inv_sigma_voltage = sparse.linalg.inv(sigma_voltage)#/1e8
     else:
         inv_sigma_current = sigma_current
         inv_sigma_voltage = sigma_voltage
 
     print("Done!")
 
-    sparse_tls_cov = SparseTotalLeastSquare(lambda_value=0, abs_tol=abs_tol, rel_tol=rel_tol, solver=solver,
+    sparse_tls_cov = SparseTotalLeastSquare(lambda_value=1e8, abs_tol=abs_tol, rel_tol=rel_tol, solver=solver,
                                             max_iterations=max_iterations, use_GPU=True)
-    sparse_tls_cov.l1_multiplier_step_size = 0*0.00001
+    sparse_tls_cov.l1_multiplier_step_size = 2#0.5
     sparse_tls_cov.cons_multiplier_step_size = 0.001
     # sparse_tls_cov.set_prior(make_real_vector(vectorize_matrix(np.zeros(y_tls.shape))), SparseTotalLeastSquare.LAPLACE,
     #                         np.diag(tls_weights_adaptive))
@@ -185,6 +194,8 @@ with mlflow.start_run(run_name='S-TLS with covariance'):
     #sparse_tls_cov.l1_target = 1.0 * (np.sum(np.power(np.abs(np.real(y_bus)), pen_degree))
     #                                  + np.sum(np.power(np.abs(np.imag(y_bus)), pen_degree)))
     sparse_tls_cov.l1_target = 1.0 * 2 * np.sum(np.abs(make_real_vector(np.diag(y_tls))))
+    print(sparse_tls_cov.l1_target)
+    print(np.sum(np.abs(make_real_vector(vectorize_matrix(y_bus)))))
 
     sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_tls)
 
@@ -260,5 +271,9 @@ plt.clf()
 
 stcplt = sparse_tls_cov_errors.plot()
 plt_stc = stcplt.get_figure()
-plt_stc.savefig(DATA_DIR / 'plot.pdf')
+plt_stc.savefig(DATA_DIR / 'errors.pdf')
+plt.clf()
+stcplt = sparse_tls_cov_targets.plot()
+plt_stc = stcplt.get_figure()
+plt_stc.savefig(DATA_DIR / 'targets.pdf')
 plt.clf()

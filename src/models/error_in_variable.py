@@ -183,8 +183,6 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             iASA = (AmdA.T @ y_weight @ AmdA) + l * W @ W
             ASb_vec = AmdA.T @ y_weight @ b
 
-            print(l)
-
             if self._use_GPU:
                 y = cuspsolve(iASA, ASb_vec)
             else:
@@ -200,7 +198,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             #update lambda such that the cost function still decreases
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
                 l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
-                if l <= 0:#self.l1_multiplier_step_size * self._lambda:
+                if np.sum(np.abs(y)) < self.l1_target or l < 0:#self.l1_multiplier_step_size * self._lambda:
                     l = 0#self.l1_multiplier_step_size * self._lambda
 
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
