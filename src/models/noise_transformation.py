@@ -66,10 +66,25 @@ def average_true_cov(measurement: np.array, sd_magnitude: float, sd_phase: float
 
 
 def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
-    measurement_vect = vectorize_matrix(measurement)
-    real_variance = average_true_var_real(measurement_vect, sd_magnitude, sd_phase)
-    imag_variance = average_true_var_imag(measurement_vect, sd_magnitude, sd_phase)
-    real_imag_covariance = average_true_cov(measurement_vect, sd_magnitude, sd_phase)
+    if type(sd_magnitude) is not float and sd_magnitude.size == measurement.shape[1]:
+        real_variance = np.zeros(measurement.shape)
+        imag_variance = np.zeros(measurement.shape)
+        real_imag_covariance = np.zeros(measurement.shape)
+        for i in range(sd_magnitude.size):
+            real_variance[:,i] = average_true_var_real(measurement[:,i], sd_magnitude[i], sd_phase)
+            imag_variance[:,i] = average_true_var_imag(measurement[:,i], sd_magnitude[i], sd_phase)
+            real_imag_covariance[:,i] = average_true_cov(measurement[:,i], sd_magnitude[i], sd_phase)
+        real_variance = vectorize_matrix(real_variance)
+        imag_variance = vectorize_matrix(imag_variance)
+        real_imag_covariance = vectorize_matrix(real_imag_covariance)
+    else:
+        if type(sd_magnitude) is not float and sd_magnitude.size > 1:
+            sd_magnitude = sd_magnitude[0]
+        measurement_vect = vectorize_matrix(measurement)
+        real_variance = average_true_var_real(measurement_vect, sd_magnitude, sd_phase)
+        imag_variance = average_true_var_imag(measurement_vect, sd_magnitude, sd_phase)
+        real_imag_covariance = average_true_cov(measurement_vect, sd_magnitude, sd_phase)
+
     sigma = sparse.bmat([
         [sparse.diags(real_variance), sparse.diags(real_imag_covariance)],
         [sparse.diags(real_imag_covariance), sparse.diags(imag_variance)]

@@ -26,9 +26,16 @@ def add_noise_in_polar_coordinates(current: np.array, voltage: np.array, magnitu
     return noisy_voltage, noisy_current
 
 
-def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: float, phase_sd: float) -> np.array:
+def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: np.array, phase_sd: float) -> np.array:
     magnitude, phase = np.abs(actual_measurement), np.angle(actual_measurement)
-    magnitude_noise = np.random.normal(0, magnitude_sd, magnitude.shape)
+    if type(magnitude_sd) is float or magnitude_sd.size == 1:
+        magnitude_noise = np.random.normal(0, magnitude_sd, magnitude.shape)
+    elif magnitude_sd.size == magnitude.shape[1]:
+        magnitude_noise = np.zeros(magnitude.shape)
+        for i in range(magnitude_sd.size):
+            magnitude_noise[:, i] = np.random.normal(0, magnitude_sd[i], magnitude.shape[0])
+    else:
+        magnitude_noise = np.random.normal(0, magnitude_sd[0], magnitude.shape)
     phase_noise = np.random.normal(0, phase_sd, phase.shape)
     noisy_magnitude = magnitude + magnitude_noise
     noisy_phase = phase + phase_noise
