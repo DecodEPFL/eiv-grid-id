@@ -12,6 +12,7 @@ class NetData(pp.pandapowerNet):
     """
     aa
     """
+
     def __init__(self, ns: list = [], ls: list = []):
         pp.pandapowerNet.__init__(self, pp.create_empty_network("net"))
         self.create_buses(ns)
@@ -19,8 +20,8 @@ class NetData(pp.pandapowerNet):
 
     def create_bus(self, i: int, t: int, p: float, q: float, kv: float):
         bus = pp.create_bus(self, kv, name=str(i), index=i)
-        if t == 1:
-            pp.create_load(self, bus, p, q, name="("+str(i)+")", index=i)
+        if t == 1 or t == 3:
+            pp.create_load(self, bus, p, q, name="(" + str(i) + ")", index=i)
         elif t == 3:
             pp.create_ext_grid(self, bus)
         return self
@@ -28,8 +29,8 @@ class NetData(pp.pandapowerNet):
     def create_buses(self, ns: list):
         for n in ns:
             bus = pp.create_bus(self, n.baseKV, name=str(n.id), index=n.id)
-            if n.type == 1:
-                pp.create_load(self, bus, n.Pd, n.Qd, name="("+str(n.id)+")", index=n.id)
+            if n.type == 1 or n.type == 3:
+                pp.create_load(self, bus, n.Pd, n.Qd, name="(" + str(n.id) + ")", index=n.id)
             if n.type == 3:
                 pp.create_ext_grid(self, bus)
         return self
@@ -39,7 +40,7 @@ class NetData(pp.pandapowerNet):
             f, t = t, f
         pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", f),
                                        pp.get_element_index(self, "bus", t),
-                                       l, r/l, x/l, 0, 1e10, "("+str(f)+","+str(t)+")")
+                                       l, r / l, x / l, 0, 1e10, "(" + str(f) + "," + str(t) + ")")
         return self
 
     def create_lines(self, ls: list):
@@ -49,10 +50,9 @@ class NetData(pp.pandapowerNet):
 
             pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", str(l.start_bus)),
                                            pp.get_element_index(self, "bus", str(l.end_bus)),
-                                           l.length, l.R/l.length, l.X/l.length, 0, 1e10,
-                                           "("+str(l.start_bus)+","+str(l.end_bus)+")")
+                                           l.length, l.R / l.length, l.X / l.length, 0, 1e10,
+                                           "(" + str(l.start_bus) + "," + str(l.end_bus) + ")")
         return self
-
 
 
 bolognani_bus56 = \
@@ -113,7 +113,6 @@ bolognani_bus56 = \
      BusData(55, 1, 0.020, 0.010, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
      BusData(56, 3, 0.000, 0.000, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8)]
 
-
 bolognani_net56 = \
     [LineData(56, 1, 0.0013398623, 0.0027450827, 3.02770271595392E-008, 100, 100, 100, 0, 0, 1, -360, 360, 400),
      LineData(1, 2, 0.0010048967, 0.0020588120, 2.27077703696544E-008, 100, 100, 100, 0, 0, 1, -360, 360, 300),
@@ -171,8 +170,7 @@ bolognani_net56 = \
      LineData(53, 54, 0.0008374139, 0.0017156767, 1.89231419747120E-008, 100, 100, 100, 0, 0, 1, -360, 360, 250),
      LineData(54, 55, 0.0008374139, 0.0017156767, 1.89231419747120E-008, 100, 100, 100, 0, 0, 1, -360, 360, 250)]
 
-
-bolognani_mapping33 = [ [56,33] ]
+bolognani_mapping33 = dict(zip([33], [56]))
 
 bolognani_bus33 = \
     [BusData(1, 1, 0.160, 0.080, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
@@ -209,7 +207,6 @@ bolognani_bus33 = \
      BusData(32, 1, 0.040, 0.020, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
      BusData(56, 3, 0.000, 0.000, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8)]
 
-
 bolognani_net33 = \
     [LineData(56, 1, 0.0013398623, 0.0027450827, 3.02770271595392E-008, 100, 100, 100, 0, 0, 1, -360, 360, 400),
      LineData(1, 2, 0.0010048967, 0.0020588120, 2.27077703696544E-008, 100, 100, 100, 0, 0, 1, -360, 360, 300),
@@ -244,11 +241,8 @@ bolognani_net33 = \
      LineData(30, 31, 0.0007536726, 0.0015441090, 1.70000000000000E-008, 100, 100, 100, 0, 0, 1, -360, 360, 225),
      LineData(31, 32, 0.0010048967, 0.0020588120, 2.27077703696544E-008, 100, 100, 100, 0, 0, 1, -360, 360, 300)]
 
-
-
-
-bolognani_mapping21 = [[40,5],[41,6],[42,7],[43,8],[44,9],[45,10],[46,11],[47,12],[48,13],[49,14],
-                       [50,15],[51,16],[52,17],[53,18],[54,19],[55,20],[56,21]]
+bolognani_mapping21 = dict(zip([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+                               [40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]))
 
 bolognani_bus21 = \
     [BusData(1, 1, 0.160, 0.080, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
@@ -273,7 +267,6 @@ bolognani_bus21 = \
      BusData(20, 1, 0.020, 0.010, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
      BusData(21, 3, 0.000, 0.000, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8)]
 
-
 bolognani_net21 = \
     [LineData(21, 1, 0.0013398623, 0.0027450827, 3.02770271595392E-008, 100, 100, 100, 0, 0, 1, -360, 360, 400),
      LineData(1, 2, 0.0010048967, 0.0020588120, 2.27077703696544E-008, 100, 100, 100, 0, 0, 1, -360, 360, 300),
@@ -295,4 +288,3 @@ bolognani_net21 = \
      LineData(16, 18, 0.0008374139, 0.0017156767, 1.89231419747120E-008, 100, 100, 100, 0, 0, 1, -360, 360, 250),
      LineData(18, 19, 0.0008374139, 0.0017156767, 1.89231419747120E-008, 100, 100, 100, 0, 0, 1, -360, 360, 250),
      LineData(20, 21, 0.0008374139, 0.0017156767, 1.89231419747120E-008, 100, 100, 100, 0, 0, 1, -360, 360, 250)]
-

@@ -4,7 +4,7 @@ from scipy import sparse
 from src.models.matrix_operations import vectorize_matrix
 
 
-def exact_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+def exact_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float, inverted: bool = False) -> np.array:
     measurement_vect = vectorize_matrix(measurement)
     m, f = np.abs(measurement_vect), np.angle(measurement_vect)
     m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
@@ -15,6 +15,13 @@ def exact_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase:
                 np.sin(f) ** 2 * (np.cosh(f_var) - 1) + np.cos(f) ** 2 * np.sinh(f_var)) + m_var * np.exp(-f_var) * (
                            np.sin(f) ** 2 * np.cosh(f_var) + np.cos(f) ** 2 * np.sinh(f_var))
     cov = np.sin(f) * np.cos(f) * np.exp(-2 * f_var) * (m_var + m ** 2 * (1 - np.exp(f_var)))
+
+    if inverted:
+        real_var_inv = np.divide(1, real_var - np.multiply(cov, np.divide(cov, imag_var)))
+        imag_var_inv = np.divide(1, imag_var - np.multiply(cov, np.divide(cov, real_var)))
+        cov_inv = -np.divide(np.multiply(cov, real_var_inv), imag_var)
+        real_var, imag_var, cov = real_var_inv, imag_var_inv, cov_inv
+
     sigma = sparse.bmat([
         [sparse.diags(real_var), sparse.diags(cov)],
         [sparse.diags(cov), sparse.diags(imag_var)]
@@ -65,7 +72,7 @@ def average_true_cov(measurement: np.array, sd_magnitude: float, sd_phase: float
     return real_imag_cov
 
 
-def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float) -> np.array:
+def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd_phase: float, inverted: bool = False) -> np.array:
     if type(sd_magnitude) is not float and sd_magnitude.size == measurement.shape[1]:
         real_variance = np.zeros(measurement.shape)
         imag_variance = np.zeros(measurement.shape)
@@ -84,6 +91,12 @@ def average_true_noise_covariance(measurement: np.array, sd_magnitude: float, sd
         real_variance = average_true_var_real(measurement_vect, sd_magnitude, sd_phase)
         imag_variance = average_true_var_imag(measurement_vect, sd_magnitude, sd_phase)
         real_imag_covariance = average_true_cov(measurement_vect, sd_magnitude, sd_phase)
+
+    if inverted:
+        real_var_inv = np.divide(1, real_variance - np.multiply(real_imag_covariance, np.divide(real_imag_covariance, imag_variance)))
+        imag_var_inv = np.divide(1, imag_variance - np.multiply(real_imag_covariance, np.divide(real_imag_covariance, real_variance)))
+        cov_inv = -np.divide(np.multiply(real_imag_covariance, real_var_inv), imag_variance)
+        real_variance, imag_variance, real_imag_covariance = real_var_inv, imag_var_inv, cov_inv
 
     sigma = sparse.bmat([
         [sparse.diags(real_variance), sparse.diags(real_imag_covariance)],

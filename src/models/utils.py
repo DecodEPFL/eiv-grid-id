@@ -19,6 +19,7 @@ def _solve_problem_with_solver(problem: cvxpy.Problem, solver, verbose: bool, wa
 
 # ### Interface cuSOLVER PyCUDA
 
+## from https://gist.github.com/mrkwjc/ebb22e8b592122cc8be6
 ## Wrap the cuSOLVER cusolverSpDcsrlsvqr() using ctypes
 ## http://docs.nvidia.com/cuda/cusolver/#cusolver-lt-t-gt-csrlsvqr
 

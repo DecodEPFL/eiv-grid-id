@@ -7,6 +7,10 @@ def fro_error(y: np.array, y_hat: np.array) -> float:
     return np.linalg.norm(y - y_hat, 'fro')
 
 
+def rel_fro_error(y: np.array, y_hat: np.array) -> float:
+    return np.linalg.norm(y - y_hat, 'fro')/np.linalg.norm(y, 'fro')*100
+
+
 def max_error(y: np.array, y_hat: np.array) -> float:
     return np.max(np.abs(y - y_hat))
 
@@ -23,6 +27,7 @@ def map_error(y: np.array, y_hat: np.array) -> float:
 
 @dataclass
 class ErrorMetrics:
+    rel_error: float
     fro_error: float
     max_error: float
     rrms_error: float
@@ -31,6 +36,7 @@ class ErrorMetrics:
 
 def error_metrics(y: np.array, y_hat: np.array) -> ErrorMetrics:
     return ErrorMetrics(
+        rel_error=rel_fro_error(y, y_hat),
         fro_error=fro_error(y, y_hat),
         max_error=max_error(y, y_hat),
         rrms_error=rrms_error(y, y_hat),

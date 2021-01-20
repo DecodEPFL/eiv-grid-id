@@ -38,7 +38,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
     def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50,
-                 penalty=1.0, verbose=False, solver=DEFAULT_SOLVER, use_GPU=False):
+                 penalty=1.0, verbose=False, solver=DEFAULT_SOLVER, use_GPU=False, enforce_laplacian=True):
         GridIdentificationModel.__init__(self)
         self._penalty = penalty
         self._l_prior = None
@@ -56,6 +56,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         self._rel_tol = rel_tol
         self._max_iterations = max_iterations
         self._use_GPU = use_GPU
+        self.enforce_y_cons = enforce_laplacian
 
     #static properties
     LAPLACE = "Laplace"
@@ -117,8 +118,12 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
         #copy data
         samples, n = x.shape
+        DT = duplication_matrix(n) @ transformation_matrix(n)
 
-        A = make_real_matrix(np.kron(np.eye(n), x))
+        if self.enforce_y_cons:
+            A = make_real_matrix(np.kron(np.eye(n), x) @ DT)
+        else:
+            A = make_real_matrix(np.kron(np.eye(n), x))
         dA = np.zeros(A.shape)
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(y))
@@ -133,7 +138,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             y_weight = sparse.csc_matrix(y_weight)
             x_weight = sparse.csc_matrix(x_weight)
 
-        y = make_real_vector(vectorize_matrix(y_init))
+        y = make_real_vector(vectorize_matrix(y_init) @ DT)
         y_mat = y_init
         z = y
         c = np.zeros(y.shape)
@@ -158,7 +163,10 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
             #create dA from da
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
-            dA = make_real_matrix(np.kron(np.eye(n), e_qp))
+            if self.enforce_y_cons:
+                dA = make_real_matrix(np.kron(np.eye(n), e_qp) @ DT)
+            else:
+                dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
             #update y
             """
@@ -175,13 +183,24 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             c = c + (y - z)
             """
 
-            #z = [(1/i if i > self.cons_multiplier_step_size else 0) for i in np.abs(y)]
+            if self._l_prior_mat is not None:
+                ll = l * self._l_prior_mat
+            else:
+                ll = l * np.eye(y.size)
+            if self._g_prior_mat is not None:
+                lg = l * self._g_prior_mat
+            else:
+                lg = 0 * l * np.eye(y.size)
+
             z = np.divide(1, np.abs(y) + self.cons_multiplier_step_size)
-            #z = np.array([(1/(i + self.cons_multiplier_step_size)) for i in np.abs(y)])
             AmdA = sparse.csc_matrix(A - dA)
-            W = sparse.diags(z)
-            iASA = (AmdA.T @ y_weight @ AmdA) + l * W @ W
+            W = sparse.diags(z)# @ sparse.diags(z)
+            iASA = (AmdA.T @ y_weight @ AmdA) + ll @ W + lg
             ASb_vec = AmdA.T @ y_weight @ b
+            if self._l_prior is not None:
+                ASb_vec = ASb_vec + ll @ W @ self._l_prior
+            if self._g_prior is not None:
+                ASb_vec = ASb_vec + lg @ self._g_prior
 
             if self._use_GPU:
                 y = cuspsolve(iASA, ASb_vec)
@@ -191,7 +210,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             self.tmp.append(l)
 
             #update cost function
-            y_mat = unvectorize_matrix(make_complex_vector(y), (n,n))
+            y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n,n))
             target = self._full_target(b, A, da, dA, x_weight, y_weight, y, l)
             self._iterations.append(IterationStatus(it, y_mat, target))
 
