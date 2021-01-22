@@ -41,7 +41,7 @@ from src.simulation.load_profile import generate_gaussian_load
 from src.simulation.network import add_load_power_control, make_y_bus
 from src.simulation.simulation import run_simulation, get_current_and_voltage
 from src.simulation.net_templates import NetData, bolognani_bus21, bolognani_net21, \
-                                         bolognani_bus56, bolognani_net56, bolognani_mapping21
+                                         bolognani_bus56, bolognani_net56, bolognani_bus33, bolognani_net33
 from src.identification.error_metrics import error_metrics, fro_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
 from conf.conf import DATA_DIR
@@ -56,11 +56,11 @@ mlflow.set_experiment('Big network with polar noise')
 
 # %%
 
-bus_data = bolognani_bus21
+bus_data = bolognani_bus56
 for b in bus_data:
     b.id = b.id - 1
 
-net_data = bolognani_net21
+net_data = bolognani_net56
 for l in net_data:
     l.length = l.length * 0.3048 / 1000
     l.start_bus = l.start_bus - 1
@@ -71,24 +71,23 @@ for l in net_data:
 net = NetData(bus_data, net_data)
 
 nodes = len(bus_data)
-selected_weeks = np.array([0, 5, 10, 15, 20, 25])
-days = 3*len(selected_weeks)
-steps = 10000
+selected_weeks = np.array([12])
+days = 30*len(selected_weeks)
+steps = 15000
 load_cv = 0.0
 current_magnitude_sd = 1e-4
 voltage_magnitude_sd = 1e-4
-phase_sd = 1e-4 / np.pi
-fmeas = 50 # [Hz]
+phase_sd = 1e-4
+fmeas = 100 # [Hz]
 
 np.random.seed(11)
-DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
 
 # %%
 
 redo_loads = False
 redo_netsim = False
 redo_noise = False
-redo_inverse = False
+redo_STLS = False
 
 # %% md
 
@@ -131,12 +130,12 @@ if redo_loads:
     pload_profile = None
     qload_profile = None
     for d in tqdm(selected_weeks*7):
-        pl = pd.read_csv(DATA_DIR / "profiles/Electricity_Profile.csv", sep=';', header=None, engine='python',
+        pl = pd.read_csv(DATA_DIR / "profiles/Electricity_Profile_RNE.csv", sep=';', header=None, engine='python',
                            skiprows=d*24*60, skipfooter=round(365*24*60 - (d+days/len(selected_weeks))*24*60)).to_numpy()
         pload_profile = pl if pload_profile is None else np.vstack((pload_profile, pl))
 
     for d in tqdm(selected_weeks*7):
-        ql = pd.read_csv(DATA_DIR / "profiles/Reactive_Electricity_Profile.csv", sep=';', header=None, engine='python',
+        ql = pd.read_csv(DATA_DIR / "profiles/Reactive_Electricity_Profile_RNE.csv", sep=';', header=None, engine='python',
                            skiprows=d*24*60, skipfooter=round(365*24*60 - (d+days/len(selected_weeks))*24*60)).to_numpy()
         qload_profile = ql if qload_profile is None else np.vstack((qload_profile, ql))
 
@@ -158,17 +157,17 @@ if redo_loads:
 
     print("Saving loads...")
     sim_PQ = {'p': load_p, 'q': load_q, 't': times}
-    np.savez(DATA_DIR / "simulations_output/sim_loads.npz", **sim_PQ)
+    np.savez(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"), **sim_PQ)
     print("Done!")
+
+print("Loading loads...")
+sim_PQ = np.load(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"))
+load_p = sim_PQ["p"]
+load_q = sim_PQ["q"]
+times = sim_PQ["t"]
+print("Done!")
 
 if redo_netsim:
-    print("Loading loads...")
-    sim_PQ = np.load(DATA_DIR / "simulations_output/sim_loads.npz")
-    load_p = sim_PQ["p"]
-    load_q = sim_PQ["q"]
-    times = sim_PQ["t"]
-    print("Done!")
-
     mpl.rcParams['lines.linewidth'] = 1
     for i in range(nodes):
         tmpplt = pd.Series(load_p[0:60*24, i]).plot()
@@ -192,78 +191,60 @@ if redo_netsim:
     y_bus = make_y_bus(controlled_net)
     voltage, current = get_current_and_voltage(sim_result, y_bus)
     controlled_net.bus
-
-    # linear interpolation of missing timesteps
-    ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
-    f = interp1d(times.squeeze(), voltage, axis=0)
-    voltage = f(ts)
-    f = interp1d(times.squeeze(), current, axis=0)
-    current = f(ts)
+    current = np.array(voltage @ y_bus)
     print("Done!")
-
-
 
     print("Saving data...")
-    sim_IV = {'i': current, 'v': voltage, 'y': y_bus}
-    np.savez(DATA_DIR / "simulations_output/sim_results.npz", **sim_IV)
+    sim_IV = {'i': current, 'v': voltage, 'y': y_bus, 't': times}
+    np.savez(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"), **sim_IV)
     print("Done!")
+
+# %%
+
+print("Loading data...")
+sim_IV = np.load(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"))
+voltage = sim_IV["v"]
+current = sim_IV["i"]
+y_bus = sim_IV["y"]
+times = sim_IV["t"]
+print("Done!")
 
 if redo_noise:
-    print("Loading data...")
-    sim_IV = np.load(DATA_DIR / "simulations_output/sim_results.npz")
-    voltage = sim_IV["v"]
-    current = sim_IV["i"]
-    y_bus = sim_IV["y"]
-    print("Done!")
+    print("Adding noise and filtering...")
+    # linear interpolation of missing timesteps, looped to reduce memory usage
+    tmp_voltage = 1j*np.zeros((steps, nodes))
+    tmp_current = 1j*np.zeros((steps, nodes))
 
-    # %%
+    ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
+    fparam = int(np.floor(ts.size/steps))
 
-    print("Adding noise...")
-    current = np.array(voltage @ y_bus)
-    voltage = voltage - np.mean(voltage)
-    current = current# - np.mean(current)
-    noisy_voltage = add_polar_noise_to_measurement(voltage, voltage_magnitude_sd, phase_sd)
-    noisy_current = add_polar_noise_to_measurement(current, current_magnitude_sd * pmu_ratings, phase_sd)
-    print("Done!")
+    for i in tqdm(range(nodes)):
+        f = interp1d(times.squeeze(), voltage[:, i], axis=0)
+        noisy_voltage = add_polar_noise_to_measurement(f(ts), voltage_magnitude_sd, phase_sd)
+        f = interp1d(times.squeeze(), current[:, i], axis=0)
+        noisy_current = add_polar_noise_to_measurement(f(ts), current_magnitude_sd * pmu_ratings[i], phase_sd)
+        for t in range(steps):
+            tmp_voltage[t, i] = np.sum(noisy_voltage[t*fparam:(t+1)*fparam]).copy()/fparam
+            tmp_current[t, i] = np.sum(noisy_current[t*fparam:(t+1)*fparam]).copy()/fparam
 
-    print("Filtering data...")
-    fparam = int(np.floor(voltage.shape[0]/steps))
-
-    tmp_voltage = 1j*np.zeros((steps,nodes))
-    tmp_current = 1j*np.zeros((steps,nodes))
-    for i in range(steps):
-        tmp_voltage[i] = np.sum(noisy_voltage[i*fparam:(i+1)*fparam], axis=0)/fparam
-        tmp_current[i] = np.sum(noisy_current[i*fparam:(i+1)*fparam], axis=0)/fparam
-
-    noisy_voltage = tmp_voltage
+    noisy_voltage = tmp_voltage - np.mean(tmp_voltage)
     noisy_current = tmp_current
     print("Done!")
 
 
     print("Saving filtered data...")
     sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'y': y_bus}
-    np.savez(DATA_DIR / "simulations_output/filtered_results.npz", **sim_IV)
+    np.savez(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"), **sim_IV)
     print("Done!")
 
 
 
 print("Loading filtered data...")
-sim_IV = np.load(DATA_DIR / "simulations_output/filtered_results.npz")
+sim_IV = np.load(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"))
 noisy_voltage = sim_IV["v"]
 noisy_current = sim_IV["i"]
 y_bus = sim_IV["y"]
 print("Done!")
-
-# %%
-
-sns_plot = sns.heatmap(np.abs(y_bus))
-fig = sns_plot.get_figure()
-fig.savefig(DATA_DIR / "y_bus.png")
-plt.clf()
-
-# %%
-
-#np.linalg.svd(voltage, compute_uv=False)
 
 # %%
 
@@ -275,6 +256,38 @@ mlflow_params = {
     'voltage_magnitude_sd': voltage_magnitude_sd,
     'phase_sd': phase_sd
 }
+
+# %% md
+
+# Kron reduction of 0 load nodes
+
+# %%
+
+print("Kron reducing loads with no current...")
+idx_todel = []
+y_new = y_bus.copy()
+for i in range(nodes-1):
+    if np.sqrt(bus_data[i].Pd*bus_data[i].Pd + bus_data[i].Pd*bus_data[i].Pd) == 0:
+        idx_todel.append(i)
+        for j in range(nodes):
+            for k in range(nodes):
+                if j is not i and k is not i:
+                    y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
+
+noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
+noisy_current = np.delete(noisy_current, idx_todel, axis=1)
+y_bus = np.delete(np.delete(y_new, idx_todel, axis=1), idx_todel, axis=0)
+pmu_ratings = np.delete(pmu_ratings, idx_todel)
+nodes = nodes - len(idx_todel)
+DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
+print("Done!")
+
+# %%
+
+sns_plot = sns.heatmap(np.abs(y_bus))
+fig = sns_plot.get_figure()
+fig.savefig(DATA_DIR / "y_bus.png")
+plt.clf()
 
 # %% md
 
@@ -306,125 +319,83 @@ print("Done!")
 # currents
 
 # %%
-with mlflow.start_run(run_name='S-TLS with covariance'):
-    max_iterations = 50
-    abs_tol = 1e-1
-    rel_tol = 10e-8
-    solver = cp.GUROBI
-    use_cov_matrix = True
-    pen_degree = 1.0
-    tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(vectorize_matrix(y_tls) @ DT)), 1.0))
-    tls_weights_tridiag = make_real_vector((1+1j)*vectorize_matrix(np.diag(np.ones(nodes)) +
-                                                                   np.diag(np.ones(nodes-1), k=1) +
-                                                                   np.diag(np.ones(nodes-1), k=-1)) @ DT)
-    tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_tridiag)
+if redo_STLS:
+    with mlflow.start_run(run_name='S-TLS with covariance'):
+        max_iterations = 100
+        abs_tol = 1e-1
+        rel_tol = 10e-8
+        solver = cp.GUROBI
+        use_cov_matrix = True
+        pen_degree = 1.0
+        tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(vectorize_matrix(y_tls) @ DT)), 1.0))
+        tls_weights_tridiag = make_real_vector((1+1j)*vectorize_matrix(np.diag(np.ones(nodes)) +
+                                                                       np.diag(np.ones(nodes-1), k=1) +
+                                                                       np.diag(np.ones(nodes-1), k=-1)) @ DT)
+        tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_tridiag)
 
-    # sigma_voltage = average_true_noise_covariance(noisy_voltage, voltage_magnitude_sd, phase_sd)
-    # sigma_current = average_true_noise_covariance(noisy_current, current_magnitude_sd * pmu_ratings, phase_sd)
+        # sigma_voltage = average_true_noise_covariance(noisy_voltage, voltage_magnitude_sd, phase_sd)
+        # sigma_current = average_true_noise_covariance(noisy_current, current_magnitude_sd * pmu_ratings, phase_sd)
 
-    # sigma_voltage = exact_noise_covariance(voltage, voltage_magnitude_sd, phase_sd)
-    # sigma_current = exact_noise_covariance(current, current_magnitude_sd, phase_sd)
+        # sigma_voltage = exact_noise_covariance(voltage, voltage_magnitude_sd, phase_sd)
+        # sigma_current = exact_noise_covariance(current, current_magnitude_sd, phase_sd)
 
-    if redo_inverse:
         print("Calculating covariance matrices...")
         inv_sigma_voltage = average_true_noise_covariance(noisy_voltage, voltage_magnitude_sd, phase_sd, True)
         inv_sigma_current = average_true_noise_covariance(noisy_current, current_magnitude_sd * pmu_ratings, phase_sd, True)
         print("Done!")
 
-        print("Saving matrix inverse...")
-        sparse.save_npz(DATA_DIR / "simulations_output/inverse_cov_I.npz", inv_sigma_current)
-        sparse.save_npz(DATA_DIR / "simulations_output/inverse_cov_V.npz", inv_sigma_voltage)
+        print("STLS identification...")
+        sparse_tls_cov = SparseTotalLeastSquare(lambda_value=3e5, abs_tol=abs_tol, rel_tol=rel_tol, solver=solver,
+                                                max_iterations=max_iterations, use_GPU=True)
+        sparse_tls_cov.l1_multiplier_step_size = 1#0.2*0.000001#2#0.02
+        sparse_tls_cov.cons_multiplier_step_size = 0.00001
+        # sparse_tls_cov.set_prior(make_real_vector(vectorize_matrix(np.zeros(y_tls.shape)) @ DT),
+        #                          SparseTotalLeastSquare.LAPLACE, np.diag(tls_weights_adaptive))
+        sparse_tls_cov.set_prior(make_real_vector(vectorize_matrix(np.zeros(y_tls.shape)) @ DT),
+                                 SparseTotalLeastSquare.LAPLACE, np.diag(tls_weights_all))
+
+        #sparse_tls_cov.l1_target = 1.0 * 0.5 * np.sum(np.abs(make_real_vector(np.diag(y_tls))))
+        #print(sparse_tls_cov.l1_target*4)
+        print(np.sum(np.abs(make_real_vector(vectorize_matrix(y_bus)))))
+
+        sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_tls)
+
+        y_sparse_tls_cov = sparse_tls_cov.fitted_admittance_matrix
+        print(np.sum(np.abs(make_real_vector(vectorize_matrix(y_sparse_tls_cov)))))
+        sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
+
+        sparse_tls_cov_errors = pd.Series([fro_error(y_bus, i.fitted_parameters) for i in sparse_tls_cov.iterations])
+        sparse_tls_cov_targets = pd.Series([i.target_function for i in sparse_tls_cov.iterations])
+        sparse_tls_cov_multipliers = pd.Series(sparse_tls_cov.tmp)
+
+        mlflow.log_param('max_iterations', max_iterations)
+        mlflow.log_param('abs_tol', abs_tol)
+        mlflow.log_param('rel_tol', rel_tol)
+        mlflow.log_param('solver', solver)
+        mlflow.log_param('use_cov_matrix', use_cov_matrix)
+        mlflow.log_params(mlflow_params)
+        mlflow.log_metrics(sparse_tls_cov_metrics.__dict__)
+
+        for i in range(len(sparse_tls_cov_errors)):
+            mlflow.log_metric('fro_error_evo', value=sparse_tls_cov_errors[i], step=i)
+            mlflow.log_metric('opt_cost_evo', value=sparse_tls_cov_targets[i], step=i)
         print("Done!")
-    else:
-        print("Loading saved matrix...")
-        inv_sigma_current = sparse.load_npz(DATA_DIR / "simulations_output/inverse_cov_I.npz")
-        inv_sigma_voltage = sparse.load_npz(DATA_DIR / "simulations_output/inverse_cov_V.npz")
+
+        print("Saving final result...")
+        sim_STLS = {'y': y_sparse_tls_cov, 'e': sparse_tls_cov_errors.to_numpy(),
+                    't': sparse_tls_cov_targets.to_numpy(), 'm': sparse_tls_cov_multipliers.to_numpy()}
+        np.savez(DATA_DIR / ("simulations_output/final_results_" + str(nodes) + ".npz"), **sim_STLS)
         print("Done!")
 
-    print("STLS identification...")
-    sparse_tls_cov = SparseTotalLeastSquare(lambda_value=1e6, abs_tol=abs_tol, rel_tol=rel_tol, solver=solver,
-                                            max_iterations=max_iterations, use_GPU=True)
-    sparse_tls_cov.l1_multiplier_step_size = 20#0.2*0.000001#2#0.02
-    sparse_tls_cov.cons_multiplier_step_size = 0.00001
-    # sparse_tls_cov.set_prior(make_real_vector(vectorize_matrix(np.zeros(y_tls.shape)) @ DT),
-    #                          SparseTotalLeastSquare.LAPLACE, np.diag(tls_weights_adaptive))
-    sparse_tls_cov.set_prior(make_real_vector(vectorize_matrix(np.zeros(y_tls.shape)) @ DT),
-                             SparseTotalLeastSquare.LAPLACE, np.diag(tls_weights_all))
-
-    #sparse_tls_cov.l1_target = 2 * np.count_nonzero(y_bus)
-    #sparse_tls_cov.l1_target = 1.0 * (np.sum(np.power(np.abs(np.real(y_bus)), pen_degree))
-    #                                  + np.sum(np.power(np.abs(np.imag(y_bus)), pen_degree)))
-    sparse_tls_cov.l1_target = 1.0 * 0.5 * np.sum(np.abs(make_real_vector(np.diag(y_tls))))
-    print(sparse_tls_cov.l1_target)
-    print(np.sum(np.abs(make_real_vector(vectorize_matrix(y_bus)))))
-
-    sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_tls)
-
-    y_sparse_tls_cov = sparse_tls_cov.fitted_admittance_matrix
-    sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
-
-    sparse_tls_cov_errors = pd.Series([fro_error(y_bus, i.fitted_parameters) for i in sparse_tls_cov.iterations])
-    sparse_tls_cov_targets = pd.Series([i.target_function for i in sparse_tls_cov.iterations])
-    sparse_tls_cov_multipliers = pd.Series(sparse_tls_cov.tmp)
-
-    mlflow.log_param('max_iterations', max_iterations)
-    mlflow.log_param('abs_tol', abs_tol)
-    mlflow.log_param('rel_tol', rel_tol)
-    mlflow.log_param('solver', solver)
-    mlflow.log_param('use_cov_matrix', use_cov_matrix)
-    mlflow.log_params(mlflow_params)
-    mlflow.log_metrics(sparse_tls_cov_metrics.__dict__)
-
-    for i in range(len(sparse_tls_cov_errors)):
-        mlflow.log_metric('fro_error_evo', value=sparse_tls_cov_errors[i], step=i)
-        mlflow.log_metric('opt_cost_evo', value=sparse_tls_cov_targets[i], step=i)
-    print("Done!")
-
 # %%
 
-# sparse_tls_cov_errors.plot()
-# sparse_tls_cov_targets.copy().multiply(0.00004).plot()
-
-
-# %%
-
-# sparse_tls_cov_targets.plot()
-
-# %%
-
-# plt.plot(sparse_tls_cov.tmp)
-
-# %% md
-
-# Result analysis
-
-# %%
-
-# sns.heatmap(np.abs(y_bus));
-
-# %%
-
-# sns.heatmap(np.abs(y_tls));
-
-# %%
-
-# sns.heatmap(np.abs(y_bus - y_tls),vmin=0,vmax=6);
-
-# %%
-
-# sns.heatmap(np.abs(y_bus - y_sparse_tls_cov),vmin=0,vmax=6);
-
-# %%
-
-# sns.heatmap(np.abs(y_sparse_tls_cov));
-
-# %%
-
-#print(y_sparse_tls_cov)
-
-print(sparse_tls_cov_metrics)
-
-#print(np.sum(np.abs(y_tls - y_sparse_tls_cov)))
+print("Loading filtered data...")
+sim_STLS = np.load(DATA_DIR / ("simulations_output/final_results_" + str(nodes) + ".npz"))
+y_sparse_tls_cov = sim_STLS["y"]
+sparse_tls_cov_errors = pd.Series(sim_STLS["e"])
+sparse_tls_cov_targets = pd.Series(sim_STLS["t"])
+sparse_tls_cov_multipliers = pd.Series(sim_STLS["m"])
+print("Done!")
 
 sns_plot = sns.heatmap(np.abs(y_sparse_tls_cov))
 fig_stc = sns_plot.get_figure()
