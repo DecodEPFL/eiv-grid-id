@@ -1,18 +1,27 @@
 from dataclasses import dataclass
 
-import cvxpy as cp
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
-from src.models.utils import cuspsolve
 from tqdm import tqdm
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix, duplication_matrix, transformation_matrix, lasso_prox, l0_prox, lq_prox
-from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
+    unvectorize_matrix, duplication_matrix, transformation_matrix, elimination_matrix
+from src.models.utils import _solve_lme, cuspsolve
 from src.identification.error_metrics import fro_error
 
+"""
+    Classes implementing total least squares type regressions
+
+    Two identification methods are implemented:
+        - Unweighted total least squares, based on data only. Without noise information, using SVD.
+        - Weighted l0/l1/l2 regularized total least squares,
+          using the Broken adaptive Ridge algorithm for one sparsity parameter value.
+    Note that a dual gradient ascent can also be used for the sparsity parameter.
+
+    Copyright @donelef, @jbrouill on GitHub
+"""
 
 @dataclass
 class IterationStatus:
@@ -24,6 +33,12 @@ class IterationStatus:
 class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 
     def fit(self, x: np.array, y: np.array):
+        """
+        Uses Singular Value Decomposition to estimate the admittance matrix with error in variables.
+
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        """
         n = x.shape[1]
         y_matrix = y.reshape((y.shape[0], 1)) if len(y.shape) == 1 else y.copy()
         u, s, vh = np.linalg.svd(np.block([x, y_matrix]))
@@ -36,29 +51,40 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 
 
 class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
+    """
+    Class implementing an MLE with error in variables and Bayesian prior knowledge.
+    It uses the Broken adaptive ridge iterative algorithm for l0 and l1 norm regularizations.
+    """
 
     def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50,
-                 penalty=1.0, verbose=False, solver=DEFAULT_SOLVER, use_GPU=False, enforce_laplacian=True):
+                 verbose=False, enforce_laplacian=True):
+        """
+        :param lambda_value: initial or fixed sparsity parameter
+        :param abs_tol: absolute change of cost function value for which the algorithm stops
+        :param rel_tol: relative change of cost function value for which the algorithm stops
+        :param max_iterations: maximum number of iterations performed
+        :param verbose: verbose on/off
+        :param enforce_laplacian: enforce the constraint that the admittance matrix is Laplacian symmetric or not
+        """
         GridIdentificationModel.__init__(self)
-        self._penalty = penalty
-        self._l_prior = None
-        self._l_prior_mat = None
-        self._g_prior = None
-        self._g_prior_mat = None
+
+        self._d_prior, self._d_prior_mat = None, None
+        self._l_prior, self._l_prior_mat = None, None
+        self._g_prior, self._g_prior_mat = None, None
+
         self._iterations = []
-        self._solver = solver
         self._verbose = verbose
         self._lambda = lambda_value
         self.l1_target = float(-1)
         self.l1_multiplier_step_size = float(0)
-        self.cons_multiplier_step_size = float(0)
+        self.num_stability_param = float(1e-5)
         self._abs_tol = abs_tol
         self._rel_tol = rel_tol
         self._max_iterations = max_iterations
-        self._use_GPU = use_GPU
         self.enforce_y_cons = enforce_laplacian
 
-    #static properties
+    # Static properties
+    DELTA = "Krondelta"
     LAPLACE = "Laplace"
     GAUSS = "Gauss"
 
@@ -66,79 +92,157 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
     def iterations(self):
         return self._iterations
 
-    @staticmethod
-    def _efficient_quadratic(v, m):
-        return v.T @ v if m is None else v.T @ m @ v
+    def set_prior(self, p_type: str = LAPLACE, p_mean: np.array = None, p_var: np.array = None):
+        """
+        Adds Bayesian prior knowledge of type p_type to the MLE problem.
 
-    def _reg_penalty(self, lambda_value, beta):
+        :param p_type: type of prior distribution: Kronecker DELTA, LAPLACE or GAUSS
+        :param p_mean: mean of the distribution
+        :param p_var: distribution parameter (equivalent to variance for Gaussian)
+        """
+        if p_type == self.DELTA:
+            self._d_prior = p_mean if p_mean is not None else 0
+            if p_var is not None:
+                self._d_prior_mat = sparse.csc_matrix(p_var)
+        elif p_type == self.LAPLACE:
+            self._l_prior = p_mean if p_mean is not None else 0
+            if p_var is not None:
+                self._l_prior_mat = sparse.csc_matrix(p_var)
+        elif p_type == self.GAUSS:
+            self._g_prior = p_mean if p_mean is not None else 0
+            if p_var is not None:
+                self._g_prior_mat = sparse.csc_matrix(p_var)
+        return
+
+    def _penalty(self, y):
+        """
+        Protected function to calculate the prior log-likelihood that regularize the TLS problem.
+
+        :param y: vectorized admittance matrix
+        :return: cost function penalty
+        """
         pen = 0
-        if self._penalty > 0:
-            y_vector = beta
-            if self._l_prior is not None:
-                y_vector = y_vector - self._l_prior
-            if self._l_prior_mat is None:
-                pen = pen + lambda_value * np.sum(np.power(np.abs(y_vector),self._penalty))
+        # l0 penalty
+        if self._d_prior is not None:
+            if self._d_prior_mat is not None:
+                pen = pen + np.linalg.norm(self._d_prior_mat @ (y - self._d_prior), 0)
             else:
-                pen = pen + lambda_value * np.sum(np.power(np.abs(self._l_prior_mat @ y_vector),self._penalty))
+                pen = pen + np.linalg.norm(y - self._d_prior, 0)
+
+        # l1 penalty
+        if self._l_prior is not None:
+            if self._l_prior_mat is not None:
+                pen = pen + np.linalg.norm(self._l_prior_mat @ (y - self._l_prior), 1)
+            else:
+                pen = pen + np.linalg.norm(y - self._l_prior, 1)
+
+        # l2 penalty
         if self._g_prior is not None:
-            pen = pen + SparseTotalLeastSquare._efficient_quadratic(beta - self._g_prior, self._g_prior_mat)
+            if self._g_prior_mat is not None:
+                pen = pen + np.linalg.norm(self._g_prior_mat @ (y - self._g_prior), 2)
+            else:
+                pen = pen + np.linalg.norm(y - self._g_prior, 2)
+
         return pen
 
-    def _lasso_target(self, b, A, dA, b_weight, lambda_value, beta):
-        error = b - (A - dA) @ beta
-        quadratic_loss = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
-        loss = quadratic_loss + self._reg_penalty(lambda_value, beta)
-        return loss
+    def _penalty_params(self, y):
+        """
+        Protected function to calculate the matrix M and vector mu such that
+        the penalty is (y - M_inv mu).T M (y - M_inv mu).
 
-    def _full_target(self, b, A, da, dA, a_weight, b_weight, beta, lambda_value):
-        error = b - (A - dA) @ beta
-        quadratic_loss_b = SparseTotalLeastSquare._efficient_quadratic(error, b_weight)
-        quadratic_loss_a = SparseTotalLeastSquare._efficient_quadratic(da, a_weight)
-        loss = quadratic_loss_a + quadratic_loss_b + self._reg_penalty(lambda_value, beta)
-        return loss
+        :param y: vectorized admittance matrix
+        :return: Tuple of matrix M and vector mu
+        """
+
+        mat = sparse.csr_matrix((y.shape[0], y.shape[0]))
+        vec = np.zeros(y.shape)
+
+        # l0 penalty
+        if self._d_prior is not None:
+            W = sparse.diags(np.divide(1, np.abs(y - self._d_prior) + self.num_stability_param), format='csr')
+            if self._d_prior_mat is not None:
+                M = W @ self._d_prior_mat @ W
+                mat = mat + M
+                if not self._d_prior == 0:
+                    vec = vec + M @ self._d_prior
+            else:
+                M = W @ W
+                mat = mat + M
+                if not self._d_prior == 0:
+                    vec = vec + M @ self._d_prior
+
+        # l1 penalty
+        if self._l_prior is not None:
+            if self._l_prior_mat is not None:
+                W = sparse.diags(np.sqrt(np.divide(1, np.abs(y - self._l_prior) + self.num_stability_param)),
+                                 format='csr')
+                M = W @ self._l_prior_mat @ W
+                mat = mat + M
+                if not self._l_prior == 0:
+                    vec = vec + M @ self._l_prior
+            else:
+                M = sparse.diags(np.divide(1, np.abs(y - self._l_prior) + self.num_stability_param), format='csr')
+                mat = mat + M
+                if not self._l_prior == 0:
+                    vec = vec + M @ self._l_prior
+
+        # l2 penalty
+        if self._g_prior is not None:
+            if self._g_prior_mat is not None:
+                mat = mat + self._g_prior_mat
+                if not self._g_prior == 0:
+                    vec = vec + self._g_prior_mat @ self._g_prior
+            else:
+                mat = mat + sparse.eye(y.shape[0])
+                if not self._g_prior == 0:
+                    vec = vec + self._g_prior
+
+        return mat, vec
 
     def _is_stationary_point(self, f_cur, f_prev) -> bool:
         return (np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol) \
                 and f_prev >= f_cur
 
-    def set_prior(self, p_mean: np.array, p_type: str = LAPLACE, p_var: np.array = None):
-        if p_type == self.LAPLACE:
-            self._l_prior = p_mean
-            if p_var is not None:
-                self._l_prior_mat = p_var
-        elif p_type == self.GAUSS:
-            self._g_prior = p_mean
-            if p_var is not None:
-                self._g_prior_mat = p_var
-        return
 
 
-    def fit(self, x: np.array, y: np.array, x_weight: np.array, y_weight: np.array, y_init: np.array):
-        #initialization of parameters
+    def fit(self, x: np.array, z: np.array, x_weight: np.array, z_weight: np.array, y_init: np.array):
+        """
+        Maximizes the likelihood db.T Wb db + da.T Wa da + p(y), where p(y) is the prior likelihood of y.
 
-        #copy data
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param x_weight: inverse covariance matrix of x
+        :param z_weight: inverse covariance matrix of z
+        :param y_init: initial guess of y
+        """
+        #Initialization of parameters
+
+        #Copy data
         samples, n = x.shape
         DT = duplication_matrix(n) @ transformation_matrix(n)
+        E = elimination_matrix(n)
 
         if self.enforce_y_cons:
             A = make_real_matrix(np.kron(np.eye(n), x) @ DT)
+            y = make_real_vector(E @ vectorize_matrix(y_init))
         else:
             A = make_real_matrix(np.kron(np.eye(n), x))
+            y = make_real_vector(vectorize_matrix(y_init))
         dA = np.zeros(A.shape)
         a = make_real_vector(vectorize_matrix(x))
-        b = make_real_vector(vectorize_matrix(y))
+        b = make_real_vector(vectorize_matrix(z))
+        #AmdA = sparse.csc_matrix(A - dA)
 
         l = self._lambda
 
         #Use covariances if provided but transform them into sparse
-        if x_weight is None or y_weight is None:
-            y_weight = sparse.eye(2 * n * samples)
-            x_weight = sparse.eye(2 * n * samples)
+        if x_weight is None or z_weight is None:
+            z_weight = sparse.eye(2 * n * samples, format='csr')
+            x_weight = sparse.eye(2 * n * samples, format='csr')
         else:
-            y_weight = sparse.csc_matrix(y_weight)
-            x_weight = sparse.csc_matrix(x_weight)
+            z_weight = sparse.csr_matrix(z_weight)
+            x_weight = sparse.csr_matrix(x_weight)
 
-        y = make_real_vector(vectorize_matrix(y_init) @ DT)
         y_mat = y_init
         z = y
         c = np.zeros(y.shape)
@@ -146,83 +250,133 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         # start iterating
         self.tmp = []
         for it in tqdm(range(self._max_iterations)):
-            #create \bar Y from y
-            real_beta_kron = sparse.kron(np.real(y_mat).T, sparse.eye(samples))
-            imag_beta_kron = sparse.kron(np.imag(y_mat).T, sparse.eye(samples))
-            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron], [imag_beta_kron, real_beta_kron]])
+            # Create \bar Y from y
+            real_beta_kron = sparse.kron(np.real(y_mat), sparse.eye(samples), format='csr')
+            imag_beta_kron = sparse.kron(np.imag(y_mat), sparse.eye(samples), format='csr')
+            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron],
+                                       [imag_beta_kron, real_beta_kron]], format='csr')
 
-            #then solve da from a linear equation
-            ysy = underline_y.T @ y_weight @ underline_y
-            sys_matrix = sparse.csc_matrix(ysy + x_weight)
-            sys_vector = sparse.csc_matrix(ysy @ a - underline_y.T @ y_weight @ b).T
+            # Solve da from a linear equation
+            ysy = underline_y.T @ z_weight @ underline_y
+            sys_matrix = sparse.csr_matrix(ysy + x_weight)
+            sys_vector = ysy @ a - underline_y.T @ z_weight @ b
 
-            if self._use_GPU:
-                da = cuspsolve(sys_matrix, sys_vector.toarray()).squeeze()
-            else:
-                da = spsolve(sys_matrix, sys_vector)
+            da = _solve_lme(sys_matrix, sys_vector).squeeze()
 
-            #create dA from da
+            # Create dA from da
             e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
             if self.enforce_y_cons:
                 dA = make_real_matrix(np.kron(np.eye(n), e_qp) @ DT)
             else:
                 dA = make_real_matrix(np.kron(np.eye(n), e_qp))
 
-            #update y
-            """
-            AmdA = (A - dA)
-            iASA = (((1 / 2) * self.cons_multiplier_step_size) * np.eye(n*n*2) + (AmdA.T @ y_weight @ AmdA))
-            ASb_vec = AmdA.T @ y_weight @ b + (z - c) * self.cons_multiplier_step_size
-            y = spsolve(iASA, ASb_vec)
+            # Update y
+            M, mu = self._penalty_params(y)
+            AmdA = sparse.csr_matrix(A - dA)
 
-            t_mat = self._l_prior_mat if self._l_prior_mat is not None else np.eye(z.size)
-            l_shift = self._l_prior if self._l_prior is not None else np.zeros(z.shape)
+            iASA = (AmdA.T @ z_weight @ AmdA) + l * M
+            ASb_vec = AmdA.T @ z_weight @ b + l * mu
 
-            z = lasso_prox(c + y - l_shift, t_mat @ (np.ones(l_shift.size) * l / self.cons_multiplier_step_size))
-
-            c = c + (y - z)
-            """
-
-            if self._l_prior_mat is not None:
-                ll = l * self._l_prior_mat
-            else:
-                ll = l * np.eye(y.size)
-            if self._g_prior_mat is not None:
-                lg = l * self._g_prior_mat
-            else:
-                lg = 0 * l * np.eye(y.size)
-
-            z = np.divide(1, np.abs(y) + self.cons_multiplier_step_size)
-            AmdA = sparse.csc_matrix(A - dA)
-            W = sparse.diags(z)# @ sparse.diags(z)
-            iASA = (AmdA.T @ y_weight @ AmdA) + ll @ W + lg
-            ASb_vec = AmdA.T @ y_weight @ b
-            if self._l_prior is not None:
-                ASb_vec = ASb_vec + ll @ W @ self._l_prior
-            if self._g_prior is not None:
-                ASb_vec = ASb_vec + lg @ self._g_prior
-
-            if self._use_GPU:
-                y = cuspsolve(iASA, ASb_vec)
-            else:
-                y = spsolve(iASA, ASb_vec)
+            y = _solve_lme(iASA.toarray(), ASb_vec)
+            y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
 
             self.tmp.append(l)
 
-            #update cost function
-            y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n,n))
-            target = self._full_target(b, A, da, dA, x_weight, y_weight, y, l)
+            # Update cost function
+            db = b - (A - dA) @ y
+            target = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da)) + l * self._penalty(y)
             self._iterations.append(IterationStatus(it, y_mat, target))
 
-            #update lambda such that the cost function still decreases
+            # Update lambda if dual ascent
             if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
                 l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
-                if np.sum(np.abs(y)) < self.l1_target or l < 0:#self.l1_multiplier_step_size * self._lambda:
-                    l = 0#self.l1_multiplier_step_size * self._lambda
+                if np.sum(np.abs(y)) < self.l1_target or l < 0:
+                    l = 0
 
+            # Check stationarity
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
-            #if it > 0 and fro_error(self.iterations[it - 1].fitted_parameters, y_mat) < self._abs_tol:
-            #    break
 
+        # Save results
+        self.estimated_variables = unvectorize_matrix(make_complex_vector(a), (samples, n))
+        self.estimated_measurements = unvectorize_matrix(make_complex_vector(b - AmdA @ y), (samples, n))
         self._admittance_matrix = y_mat
+
+    def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
+        # Initialization of parameters
+        samples, n = x.shape
+        DT = duplication_matrix(n) @ transformation_matrix(n)
+
+        # Copy data
+        if self.enforce_y_cons:
+            Ar = sparse.csr_matrix(np.real(np.kron(np.eye(n), x) @ DT))
+            Ai = sparse.csr_matrix(np.imag(np.kron(np.eye(n), x) @ DT))
+        else:
+            Ar = sparse.csr_matrix(np.real(np.kron(np.eye(n), x)))
+            Ai = sparse.csr_matrix(np.imag(np.kron(np.eye(n), x)))
+        b = vectorize_matrix(z)
+        yr = np.real(y_mat)
+        yi = np.imag(y_mat)
+
+        # Create matrices to fill
+        nn = n*n
+        if self.enforce_y_cons:
+            nn = int(n*(n-1)/2)
+        F_tls_r = sparse.csr_matrix((nn, nn))
+        F_tls_ir = sparse.csr_matrix((nn, nn))
+        F_tls_i = sparse.csr_matrix((nn, nn))
+
+        # calculate each F_i = h_i h_i^T / (zT R_i z) and summing them up
+        for k in tqdm(range(int(samples))):
+            for i in range(n):
+                # Compute indices to rebuild R_i from full covariance matrices
+                x_weight_idx = [((ii*samples) + k) for ii in range(n)]
+                x_weight_idx_p = [((ii*samples) + k + n*samples) for ii in range(n)]
+                idx = k + i*samples
+                idx_p = k + (n+i)*samples
+
+                # Calculate zT R_i z
+                den_r = yr[:, i].dot(x_cov[:, x_weight_idx][x_weight_idx, :].dot(yr[:, i])) + y_cov[idx, idx]
+                den_i = yi[:, i].dot(x_cov[:, x_weight_idx_p][x_weight_idx_p, :].dot(yi[:, i])) + y_cov[idx_p, idx_p]
+                den_ir = yi[:, i].dot(x_cov[:, x_weight_idx_p][x_weight_idx, :].dot(yr[:, i])) + y_cov[idx_p, idx]
+
+                # Obtain h_i h_i^T
+                hr = Ar[idx, :]
+                hi = Ai[idx, :]
+
+                # adding F_i to F
+                hhir = sparse.kron(hr, hi.T)
+                F_tls_r = F_tls_r + sparse.kron(hr, hr.T) / den_r
+                F_tls_i = F_tls_i + sparse.kron(hi, hi.T) / den_i
+                F_tls_ir = F_tls_ir + (hhir + hhir.T) / den_ir / 2
+
+        # Block 2x2 matrix F for real y
+        return np.block([[F_tls_r.toarray(), F_tls_ir.toarray()], [F_tls_ir.toarray(), F_tls_i.toarray()]])
+
+    def bias_and_variance(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
+        # Initialization of parameters
+        samples, n = x.shape
+        E = elimination_matrix(n)
+
+        # Copy data
+        if self.enforce_y_cons:
+            y = make_real_vector(E @ vectorize_matrix(y_mat))
+        else:
+            y = make_real_vector(vectorize_matrix(y_mat))
+
+        # Get unregularized inverse covariance (equal to fisher information matrix)
+        Ftls = sparse.csc_matrix(self.fisher_info(x, z, x_cov, y_cov, y_mat, True))
+
+        # Create regularization parameters
+        M, mu = self._penalty_params(y)
+
+        # Compute regularized Fisher information matrix and its inverse
+        F = Ftls + self._lambda * M
+        Finv = sparse.linalg.inv(F)
+
+        # Calculate covariance and bias
+        cov = Finv @ Ftls @ Finv
+        bias = self._lambda * F @ (M @ y - 0*mu)
+
+        return bias, cov.toarray()
+

@@ -11,14 +11,44 @@ from src.models.matrix_operations import vectorize_matrix, make_real_matrix, mak
     unvectorize_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 
+"""
+    Classes implementing ordinary least squares type regressions
+
+    Two identification methods are implemented:
+        - Unweighted ordinary least squares, based on data only. Without noise information.
+        - Unweighted Lasso regression, with an array of sparsity parameters and cross validation.
+
+    Copyright @donelef, @jbrouill on GitHub
+"""
 
 class ComplexRegression(GridIdentificationModel, UnweightedModel):
+    """
+    Implements the ordinary least squares fit for power systems,
+    estimating their admittance matrix from voltage and currents data.
+    """
 
-    def fit(self, x: np.array, y: np.array):
-        self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ y
+    def fit(self, x: np.array, z: np.array):
+        """
+        Tries to estimate the parameters y of a system such that z = x y, from data on x and z.
+        It uses the ordinary least squares solutions, minimizing ||z - x y||.
+
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        """
+        self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ z
 
 
 class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
+    """
+    Implements the Lasso fit for power systems,
+    estimating their admittance matrix from voltage and currents data.
+
+    It tries all the parameters lambda given as an array and chooses the best one,
+    based on the true value of the admittance matrix.
+
+    This class requires a QP solver, implemented in cvxpy
+    """
+
     def __init__(self, true_admittance: np.array, lambdas=np.logspace(-2, 2, 100), verbose=True, solver=DEFAULT_SOLVER):
         CVModel.__init__(self, true_admittance, fro_error)
         self._lambdas = lambdas
@@ -38,19 +68,22 @@ class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
         return beta_matrix
 
     @staticmethod
-    def _objective_function(x_vect: np.array, y_vect: np.array, beta, lambda_value):
-        return cp.sum_squares(x_vect @ beta - y_vect) + lambda_value * cp.norm1(beta)
+    def _objective_function(x_vect: np.array, z_vect: np.array, beta, lambda_value):
+        return cp.sum_squares(x_vect @ beta - z_vect) + lambda_value * cp.norm1(beta)
 
-    def fit(self, x: np.array, y: np.array, vectored: bool = False):
-        if vectored:
-            x_tilde = make_real_matrix(x.copy())
-            y_tilde = make_real_vector(y.copy())
-        else:
-            x_tilde, y_tilde = self._vectorize_and_make_real(x, y)
+    def fit(self, x: np.array, z: np.array):
+        """
+        Tries to estimate the parameters y of a system such that z = x y, from data on x and z.
+        It uses the ordinary least squares solutions, minimizing ||z - x y||, with a l1 penalty on y for sparsity.
+
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        """
+        x_tilde, z_tilde = self._vectorize_and_make_real(x, z)
 
         beta = cp.Variable(x_tilde.shape[1])
         lambda_param = cp.Parameter(nonneg=True)
-        problem = cp.Problem(cp.Minimize(self._objective_function(x_tilde, y_tilde, beta, lambda_param)))
+        problem = cp.Problem(cp.Minimize(self._objective_function(x_tilde, z_tilde, beta, lambda_param)))
 
         self._cv_trials = []
         for lambda_value in self._lambdas:

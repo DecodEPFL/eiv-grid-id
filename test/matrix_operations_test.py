@@ -1,7 +1,7 @@
 import numpy as np
 
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, unvectorize_matrix, \
-    make_complex_vector, transformation_matrix, duplication_matrix
+    make_complex_vector, transformation_matrix, duplication_matrix, elimination_matrix
 
 
 def test_make_real_matrix():
@@ -67,3 +67,21 @@ def test_duplication_matrix():
     v = np.array([1, 2, 3, 4, 5, 6])
     np.testing.assert_equal(vectorize_matrix(m), duplication_matrix(3) @ v)
 
+def test_elimination_matrix():
+    m = np.array([
+        [2, -1, -1],
+        [-1, 4, -3],
+        [-1, -3, 4],
+    ])
+    v = np.array([1, 1, 3])
+    np.testing.assert_equal(v, elimination_matrix(3) @ vectorize_matrix(m))
+
+def test_elimination_duplication():
+    m = unvectorize_matrix(np.arange(64), (8, 8))
+    m = m + m.T
+    DT = duplication_matrix(8) @ transformation_matrix(8)
+    E = elimination_matrix(8)
+    for i in range(8):
+        m[i, i] = 0
+        m[i, i] = -sum(m[i, :])
+    np.testing.assert_equal(m, unvectorize_matrix(DT @ E @ vectorize_matrix(m), (8, 8)))
