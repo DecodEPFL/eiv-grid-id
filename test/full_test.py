@@ -371,8 +371,8 @@ plt.clf()
 # Covariance matrices of currents and voltages are calculated using the average true noise method.
 """
 # %%
-abs_tol = 1e-1
-rel_tol = 10e-8
+abs_tol = 1e1
+rel_tol = 10e-3
 sparse_tls_cov = SparseTotalLeastSquare(lambda_value=2e9, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations)
 
 if max_iterations > 0:
