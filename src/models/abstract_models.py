@@ -19,6 +19,13 @@ import numpy as np
 
 
 @dataclass
+class IterationStatus:
+    iteration: int
+    fitted_parameters: np.array
+    target_function: float
+
+
+@dataclass
 class CVTrialResult:
     hyperparameters: dict
     fitted_parameters: np.array

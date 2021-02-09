@@ -17,7 +17,7 @@ def fro_error(y: np.array, y_hat: np.array) -> float:
     :param y_hat: estimated parameters as numpy array
     :return: Frobenius norm of the estimation error
     """
-    return np.linalg.norm(y - y_hat, 'fro')
+    return np.linalg.norm(y - y_hat, ('fro' if len(y.shape) > 1 else 2))
 
 
 def max_error(y: np.array, y_hat: np.array) -> float:
@@ -39,7 +39,7 @@ def rrms_error(y: np.array, y_hat: np.array) -> float:
     :param y_hat: estimated parameters as numpy array
     :return: Frobenius norm of the relative estimation error, as percentage
     """
-    return fro_error(y, y_hat) / np.linalg.norm(y, 'fro') * 100
+    return fro_error(y, y_hat) / np.linalg.norm(y, ('fro' if len(y.shape) > 1 else 2)) * 100
 
 
 def map_error(y: np.array, y_hat: np.array) -> float:

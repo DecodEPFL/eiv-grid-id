@@ -5,7 +5,7 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 from tqdm import tqdm
 
-from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel
+from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel, IterationStatus
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
     unvectorize_matrix, duplication_matrix, transformation_matrix, elimination_matrix
 from src.models.utils import _solve_lme, cuspsolve
@@ -22,12 +22,6 @@ from src.identification.error_metrics import fro_error
 
     Copyright @donelef, @jbrouill on GitHub
 """
-
-@dataclass
-class IterationStatus:
-    iteration: int
-    fitted_parameters: np.array
-    target_function: float
 
 
 class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
@@ -163,12 +157,12 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             if self._d_prior_mat is not None:
                 M = W @ self._d_prior_mat @ W
                 mat = mat + M
-                if not self._d_prior == 0:
+                if not np.all(self._d_prior == 0):
                     vec = vec + M @ self._d_prior
             else:
                 M = W @ W
                 mat = mat + M
-                if not self._d_prior == 0:
+                if not np.all(self._d_prior == 0):
                     vec = vec + M @ self._d_prior
 
         # l1 penalty
@@ -178,23 +172,23 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
                                  format='csr')
                 M = W @ self._l_prior_mat @ W
                 mat = mat + M
-                if not self._l_prior == 0:
+                if not np.all(self._l_prior == 0):
                     vec = vec + M @ self._l_prior
             else:
                 M = sparse.diags(np.divide(1, np.abs(y - self._l_prior) + self.num_stability_param), format='csr')
                 mat = mat + M
-                if not self._l_prior == 0:
+                if not np.all(self._l_prior == 0):
                     vec = vec + M @ self._l_prior
 
         # l2 penalty
         if self._g_prior is not None:
             if self._g_prior_mat is not None:
                 mat = mat + self._g_prior_mat
-                if not self._g_prior == 0:
+                if not np.all(self._g_prior == 0):
                     vec = vec + self._g_prior_mat @ self._g_prior
             else:
                 mat = mat + sparse.eye(y.shape[0])
-                if not self._g_prior == 0:
+                if not np.all(self._g_prior == 0):
                     vec = vec + self._g_prior
 
         return mat, vec
@@ -365,7 +359,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             y = make_real_vector(vectorize_matrix(y_mat))
 
         # Get unregularized inverse covariance (equal to fisher information matrix)
-        Ftls = sparse.csc_matrix(self.fisher_info(x, z, x_cov, y_cov, y_mat, True))
+        Ftls = sparse.csc_matrix(self.fisher_info(x, z, x_cov, y_cov, y_mat))
 
         # Create regularization parameters
         M, mu = self._penalty_params(y)

@@ -33,9 +33,9 @@ import sys
 sys.path.insert(1, '..')
 
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, transformation_matrix, \
-                                         make_complex_vector, unvectorize_matrix, elimination_matrix
+                                         make_complex_vector, unvectorize_matrix, elimination_matrix, undelete
 from src.simulation.noise import add_polar_noise_to_measurement
-from src.models.regression import ComplexRegression, ComplexLasso
+from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
 from src.simulation.load_profile import generate_gaussian_load
 from src.simulation.network import add_load_power_control, make_y_bus
@@ -45,6 +45,11 @@ from src.simulation.net_templates import NetData, bolognani_bus21, bolognani_net
 from src.identification.error_metrics import error_metrics, fro_error, rrms_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
 from conf.conf import DATA_DIR
+from src.models.utils import plot_heatmap, plot_scatter, plot_series
+
+
+def undel_kron(m, idx):
+    return undelete(undelete(m.copy(), idx, axis=1), idx, axis=0)
 
 # %% md
 
@@ -92,12 +97,13 @@ np.random.seed(11)
 redo_loads = False
 redo_netsim = False
 redo_noise = False
+redo_standard_methods = False
 redo_STLS = True
-max_iterations = 50
+max_iterations = 20
 redo_covariance = False
 
 # %% md
-
+print(DATA_DIR)
 # PMU ratings
 """
 # Defining ratings for the PMU to estimate noise levels.
@@ -161,6 +167,8 @@ load_p = sim_PQ["p"]
 load_q = sim_PQ["q"]
 times = sim_PQ["t"]
 print("Done!")
+plot_series(load_p[180:60*24+180, np.r_[0:6, 7:11]], 'loads', s=2, ar=2000,
+            colormap=['grey', 'grey', 'grey', 'black', 'grey', 'grey', 'grey', 'grey', 'grey', 'grey'])
 
 # %% md
 
@@ -171,13 +179,6 @@ print("Done!")
 # %%
 
 if redo_netsim:
-    mpl.rcParams['lines.linewidth'] = 1
-    for i in range(nodes):
-        tmpplt = pd.Series(load_p[0:60*24, i]).plot()
-    plt_tmp = tmpplt.get_figure()
-    plt_tmp.savefig(DATA_DIR / 'loads.pdf')
-    plt.clf()
-
     # for cubic interpolation, we need to do it on the loads, but it's very slow !
     # print("Interpolating missing loads...")
     # f = interp1d(load_profile['t'].squeeze(), load_p, axis=0, type="cubic")
@@ -322,73 +323,190 @@ DT = duplication_matrix(newnodes) @ transformation_matrix(newnodes)
 E = elimination_matrix(newnodes)
 print("Done!")
 
+# TODO: fix complex warning
+q, r = np.linalg.qr(voltage)
+stcplt = pd.Series(np.log10(np.diag(r)[1:]/r[0, 0]).tolist())
+plot_series(np.expand_dims(stcplt.to_numpy(), axis=1), 'correlations', s=3, colormap='Blues')
+
 # %%
 
-sns_plot = sns.heatmap(np.abs(y_bus))
-fig = sns_plot.get_figure()
-fig.savefig(DATA_DIR / "y_bus.png")
-plt.clf()
+plot_heatmap(undel_kron(np.tril(np.abs(y_bus), -1) + np.tril(np.abs(y_bus), -1).T, idx_todel), "y_bus")
 
-# %% md
-
-# TLS Identification
-"""
-# Performing the total least squares indentification of the network.
-# The problem is unweighted and the solution is not sparse.
-# It is however a good initial guess for future identifications.
-"""
 # %%
 
-print("TLS identification...")
-tls = TotalLeastSquares()
-tls.fit(noisy_voltage, noisy_current)
-y_tls = tls.fitted_admittance_matrix
+if redo_standard_methods:
+
+    # %% md
+
+    # OLS Identification
+    """
+    # Performing the ordinary least squares indentification of the network.
+    # The problem is unweighted and the solution is not sparse.
+    # It does not take error in variables into account.
+    """
+    # %%
+
+    print("OLS identification...")
+    ols = ComplexRegression()
+    ols.fit(noisy_voltage, noisy_current)
+    y_ols = ols.fitted_admittance_matrix
+    print("Done!")
+
+    # %% md
+
+    # TLS Identification
+    """
+    # Performing the total least squares indentification of the network.
+    # The problem is unweighted and the solution is not sparse.
+    # It is however a good initial guess for future identifications.
+    """
+    # %%
+
+    print("TLS identification...")
+    tls = TotalLeastSquares()
+    tls.fit(noisy_voltage, noisy_current)
+    y_tls = tls.fitted_admittance_matrix
+    print("Done!")
+
+    # %% md
+
+    # Adaptive Lasso
+    """
+    # Computing the Lasso estimate based on a Bayesian prio and the OLS solution.
+    # w_{i->k} = lambda / y_ols_{i->k} for adaptive Lasso weights.
+    """
+    # %%
+    abs_tol = 1e-20
+    rel_tol = 1e-20
+    lasso = BayesianRegression(lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10)
+
+    if True:#max_iterations > 0:
+        # Create various priors, try with tls !!
+        y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
+        tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
+
+        # Get or create starting data
+        y_lasso = y_sym_ols.copy()
+
+        print("Lasso identification...")
+        lasso.num_stability_param = 0.00001
+
+        # Adaptive weights
+        lasso.set_prior(SparseTotalLeastSquare.LAPLACE, None, np.diag(tls_weights_adaptive))
+
+        lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
+        y_lasso = lasso.fitted_admittance_matrix
+        print("Done!")
+
+
+    print("Saving standard results...")
+    sim_ST = {'o': y_ols, 't': y_tls, 'l': y_lasso}
+    np.savez(DATA_DIR / ("simulations_output/standard_results_" + str(nodes) + ".npz"), **sim_ST)
+    print("Done!")
+
+#%%
+
+print("Loading standard results...")
+sim_ST = np.load(DATA_DIR / ("simulations_output/standard_results_" + str(nodes) + ".npz"))
+y_ols = sim_ST['o']
+y_tls = sim_ST['t']
+y_lasso = sim_ST['l']
+
+ols_metrics = error_metrics(y_bus, y_ols)
+print(ols_metrics)
+with open(DATA_DIR / 'ols_error_metrics.txt', 'w') as f:
+    print(ols_metrics, file=f)
+plot_heatmap(undel_kron(np.abs(y_ols) - np.diag(np.diag(np.abs(y_ols))), idx_todel), "y_ols")
+
 tls_metrics = error_metrics(y_bus, y_tls)
 print(tls_metrics)
+with open(DATA_DIR / 'tls_error_metrics.txt', 'w') as f:
+    print(tls_metrics, file=f)
+plot_heatmap(undel_kron(np.abs(y_tls) - np.diag(np.diag(np.abs(y_tls))), idx_todel), "y_tls")
 
-sns_plot = sns.heatmap(np.abs(y_tls))
-fig_t = sns_plot.get_figure()
-fig_t.savefig(DATA_DIR / "y_tls.png")
-plt.clf()
+lasso_metrics = error_metrics(y_bus, y_lasso)
+print(lasso_metrics)
+with open(DATA_DIR / 'lasso_error_metrics.txt', 'w') as f:
+    print(lasso_metrics, file=f)
+plot_heatmap(undel_kron(np.tril(np.abs(y_lasso), -1) + np.tril(np.abs(y_lasso), -1).T, idx_todel), "y_lasso")
+
 print("Done!")
-
-q, r = np.linalg.qr(voltage)
-
-stcplt = pd.Series(np.log10(np.diag(r)[1:]/r[0, 0]).tolist()).plot()
-plt_stc = stcplt.get_figure()
-plt_stc.savefig(DATA_DIR / 'qrtmp.pdf')
-plt.clf()
 
 # %% md
 
-# L1 Regularized TLS
+# Bayesian priors definition
 """
-# Computing the Maximum Likelihood Estimator, based on a prior representing a chained network using the y_tls solution
+# Generate a prior tls_weights_all representing a chained network using the y_tls solution
 # This prior can be defined as the following l1 regularization weights.
 # All lines admittances i->k are penalized by a parameter w_{i->k} except if k = i+1:
 # w_{i->k} = lambda / y_tls_{i->k} for adaptive Lasso weights.
+#
+# Another prior inserts actual values for edges around nodes 2, 41 and 51, as well as the edge from 4 to 40.
+# It also includes a small regularization for the nodes belonging to the a chained network prior.
+"""
+# %%
+
+# Make tls solution symmetric
+y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_bus), (newnodes, newnodes))
+
+# Create adaptive chain network prior
+tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls))), 1.0))
+tls_weights_chain = make_real_vector(E @ ((1+1j)*vectorize_matrix(3*np.diag(np.ones(newnodes)) -
+                                                                  np.tri(newnodes, newnodes, 1) +
+                                                                  np.tri(newnodes, newnodes, -2))))
+tls_weights_chain = np.ones(tls_weights_chain.shape) - tls_weights_chain
+tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_chain)
+
+# Adding small tridiagonal booster to prior with more information
+tls_bus_weights = np.zeros(y_sym_tls.shape)
+tls_bus_centers = 50000.0*(1-1j)*(np.tri(newnodes, newnodes, -2) - np.tri(newnodes, newnodes, 1))
+
+# Node 2
+tls_bus_weights[1, :], tls_bus_weights[:, 1] = -1, -1
+tls_bus_centers[1, 0], tls_bus_centers[0, 1] = y_bus[1, 0], y_bus[0, 1]
+tls_bus_centers[1, 2], tls_bus_centers[2, 1] = y_bus[1, 2], y_bus[2, 1]
+
+# Node 51 & 52
+tls_bus_weights[47, :], tls_bus_weights[:, 47] = -1, -1
+tls_bus_centers[47, 46], tls_bus_centers[46, 47] = y_bus[47, 46], y_bus[46, 47]
+tls_bus_centers[47, 48], tls_bus_centers[48, 47] = y_bus[47, 48], y_bus[48, 47]
+tls_bus_centers[47, 49], tls_bus_centers[49, 47] = y_bus[47, 49], y_bus[49, 47]
+tls_bus_weights[48, 49], tls_bus_weights[48, 49] = -1, -1
+tls_bus_centers[48, 49], tls_bus_centers[49, 48] = 0j, 0j
+
+# Node 41 and line 4->40
+tls_bus_weights[3, 36], tls_bus_weights[36, 3] = -1, -1
+tls_bus_centers[3, 36], tls_bus_centers[36, 3] = y_bus[3, 36], y_bus[36, 3]
+tls_bus_weights[37, 38], tls_bus_weights[38, 37] = -1, -1
+tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
+
+# Vectorize and add to the rest
+tls_bus_weights = np.abs(make_real_vector(E @ ((1+1j)*vectorize_matrix(tls_bus_weights))))
+tls_bus_centers = make_real_vector(E @ vectorize_matrix(tls_bus_centers))
+tls_bus_weights = np.multiply(tls_weights_adaptive, tls_weights_chain +
+                              0.3*np.ones(tls_bus_weights.shape) + 100*tls_bus_weights)
+
+# %% md
+
+# L1 Regularized weighted TLS
+"""
+# Computing the Maximum Likelihood Estimator,
+# based on priors defined previously.
+# This operation takes long, around 4 minutes per iteration.
+# The results and details about each iteration are saved after.
 #
 # Covariance matrices of currents and voltages are calculated using the average true noise method.
 """
 # %%
 abs_tol = 1e1
 rel_tol = 10e-3
-sparse_tls_cov = SparseTotalLeastSquare(lambda_value=2e9, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations)
+sparse_tls_cov = SparseTotalLeastSquare(lambda_value=2e10, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations)
 
 if max_iterations > 0:
-    # Create various priors
-    y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
-    tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls))), 1.0))
-    tls_weights_chain = make_real_vector(E @ ((1+1j)*vectorize_matrix(3*np.diag(np.ones(newnodes)) -
-                                                                      np.tri(newnodes, newnodes, 3) +
-                                                                      np.tri(newnodes, newnodes, -4))))
-    tls_weights_chain = np.ones(tls_weights_chain.shape) - tls_weights_chain
-    tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_chain)
-
     # Get or create starting data
     if not redo_STLS:
         print("Loading previous result...")
-        sim_STLS = np.load(DATA_DIR / ("simulations_output/final_results_" + str(newnodes) + ".npz"))
+        sim_STLS = np.load(DATA_DIR / ("simulations_output/final_results_" + str(nodes) + ".npz"))
         y_sparse_tls_cov = sim_STLS["y"]
         sparse_tls_cov_errors = pd.Series(sim_STLS["e"])
         sparse_tls_cov_targets = pd.Series(sim_STLS["t"])
@@ -406,7 +524,7 @@ if max_iterations > 0:
     print("Done!")
 
     print("STLS identification...")
-    sparse_tls_cov.num_stability_param = 0.00001
+    sparse_tls_cov.num_stability_param = 1e-8
 
     # Dual ascent parameters, set > 0 to activate
     sparse_tls_cov.l1_multiplier_step_size = 0*1#0.2*0.000001#2#0.02
@@ -415,6 +533,7 @@ if max_iterations > 0:
     # Priors: l0, l1, and l2
     #sparse_tls_cov.set_prior(SparseTotalLeastSquare.DELTA, None, np.eye(tls_weights_all.size))
     sparse_tls_cov.set_prior(SparseTotalLeastSquare.LAPLACE, None, np.diag(tls_weights_all))
+    #sparse_tls_cov.set_prior(SparseTotalLeastSquare.LAPLACE, tls_bus_centers, np.diag(tls_bus_weights))
     #sparse_tls_cov.set_prior(SparseTotalLeastSquare.GAUSS, None, np.power(np.diag(tls_weights_all), 2))
 
     sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_sparse_tls_cov)
@@ -453,38 +572,40 @@ estimated_voltage = sim_STLS["v"]
 estimated_current = sim_STLS["i"]
 print("Done!")
 
+#y_sparse_tls_cov[np.abs(y_sparse_tls_cov) < 0.8*np.abs(y_bus[36, 3])] = 0j
+
 sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
+with open(DATA_DIR / 'sparse_tls_error_metrics.txt', 'w') as f:
+    print(sparse_tls_cov_metrics, file=f)
 print(sparse_tls_cov_metrics)
-sns_plot = sns.heatmap(np.abs(y_sparse_tls_cov))
-fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "y_sparse_tls_cov.png")
-plt.clf()
-sns_plot = sns.heatmap(np.abs(y_sparse_tls_cov - y_bus))
-fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "y_sparse_tls_cov_errors.png")
-plt.clf()
-sns_plot = sns.heatmap(np.abs(y_sparse_tls_cov - y_tls))
-fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "y_sparse_tls_cov_impact.png")
-plt.clf()
+plot_heatmap(undel_kron(np.tril(np.abs(y_sparse_tls_cov), -1) + np.tril(np.abs(y_sparse_tls_cov), -1).T,
+                        idx_todel), "y_sparse_tls_cov")
+plot_heatmap(undel_kron(np.tril(np.abs(y_sparse_tls_cov - y_bus), -1) + np.tril(np.abs(y_sparse_tls_cov - y_bus), -1).T,
+                        idx_todel), "y_sparse_tls_cov_errors")
+plot_heatmap(undel_kron(np.tril(np.abs(y_sparse_tls_cov - y_tls), -1) + np.tril(np.abs(y_sparse_tls_cov - y_tls), -1).T,
+                        idx_todel), "y_sparse_tls_cov_impact")
 
+plot_series(np.expand_dims(sparse_tls_cov_errors.to_numpy(), axis=1), 'errors', s=3, colormap='Blues')
+plot_series(np.expand_dims(sparse_tls_cov_targets[1:].to_numpy(), axis=1), 'targets', s=3, colormap='Blues')
+plot_series(np.expand_dims(sparse_tls_cov_multipliers.to_numpy(), axis=1), 'multipliers', s=3, colormap='Blues')
 
-stcplt = sparse_tls_cov_errors.plot()
-plt_stc = stcplt.get_figure()
-plt_stc.savefig(DATA_DIR / 'errors.pdf')
-plt.clf()
-stcplt = sparse_tls_cov_targets[1:].plot()
-plt_stc = stcplt.get_figure()
-plt_stc.savefig(DATA_DIR / 'targets.pdf')
-plt.clf()
-stcplt = sparse_tls_cov_multipliers.plot()
-plt_stc = stcplt.get_figure()
-plt_stc.savefig(DATA_DIR / 'multipliers.pdf')
-plt.clf()
+y_comp_idx = (np.abs(E @ vectorize_matrix(np.abs(y_bus)))) > 0
+y_comp = np.array([E @ vectorize_matrix(y_ols), E @ vectorize_matrix(y_tls), E @ vectorize_matrix(y_lasso),
+                   E @ vectorize_matrix(y_sparse_tls_cov), E @ vectorize_matrix(y_bus)]).T
+plot_scatter(np.abs(y_comp[y_comp_idx, :]), 'comparison', s=3,
+             labels=['OLS', 'TLS', 'Lasso', 'MLE', 'actual'], colormap='jet', ar=8e-4)
 
-exit(0)
+with open(DATA_DIR / 'sparsity_metrics.txt', 'w') as f:
+    print("OLS", file=f)
+    print(error_metrics(2*y_comp[np.invert(y_comp_idx), 0], 2*y_comp[np.invert(y_comp_idx), 4]), file=f)
+    print("TLS", file=f)
+    print(error_metrics(2*y_comp[np.invert(y_comp_idx), 1], 2*y_comp[np.invert(y_comp_idx), 4]), file=f)
+    print("Lasso", file=f)
+    print(error_metrics(2*y_comp[np.invert(y_comp_idx), 2], 2*y_comp[np.invert(y_comp_idx), 4]), file=f)
+    print("MLE", file=f)
+    print(error_metrics(2*y_comp[np.invert(y_comp_idx), 3], 2*y_comp[np.invert(y_comp_idx), 4]), file=f)
 
-# %% md
+# %%
 
 # Error covariance of result
 """
@@ -517,28 +638,29 @@ real_y_bias = sim_cov["a"]
 estimated_y_bias = sim_cov["b"]
 print("Done!")
 
-sns_plot = sns.heatmap(np.log(np.abs(real_y_cov)))
-fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "real_cov.png")
-plt.clf()
+
+y_error_std = unvectorize_matrix(DT @ np.sqrt(np.abs(make_complex_vector(np.diag(estimated_y_cov)))),
+                                 y_sparse_tls_cov.shape)
+print(np.mean(np.abs(y_error_std)))
+cov_metrics = error_metrics(real_y_cov, estimated_y_cov)
+print(cov_metrics)
+plot_heatmap(undel_kron(np.tril(np.log2(np.abs(y_error_std)), -1) + np.tril(np.log(np.abs(y_error_std)), -1).T,
+                        idx_todel), "error_std")
 
 #sns_plot = sns.heatmap(estimated_y_cov)
 #fig_stc = sns_plot.get_figure()
 #fig_stc.savefig(DATA_DIR / "est_cov.png")
 #plt.clf()
 
+exit(0)
+
 # %%
 
 print("Inverting covariance matrix...")
 nn = newnodes * (newnodes-1)
 F_val = sp.stats.f.ppf(0.95, nn, newnodes*steps - nn) * newnodes*steps / (newnodes*steps - nn)
-y_cov = real_y_cov
+y_cov = real_y_cov # estimated_y_cov
 inv_y_cov = sparse.linalg.inv(sparse.csc_matrix(y_cov))
-
-cov_metrics = error_metrics(real_y_cov, estimated_y_cov)
-print(cov_metrics)
-print(np.max(np.abs(real_y_cov)))
-print(np.max(np.abs(estimated_y_cov)))
 
 #sns_plot = sns.heatmap(np.log(np.abs(inv_y_cov.toarray())).clip(min=0))
 var_tmp = unvectorize_matrix(DT @ make_complex_vector(np.linalg.eig(estimated_y_cov)[0]), y_tls.shape)
@@ -554,7 +676,6 @@ y_thresholded = y_sparse_tls_cov
 y_vect = elimination_matrix(newnodes) @ vectorize_matrix(y_sparse_tls_cov.copy())
 dthr, mthr = 1e-9, 1e-9
 vals = []
-thr_scale = 1*np.sqrt(np.abs(make_complex_vector(np.diag(y_cov))))
 
 val, thr = 0, 0
 y_fin = y_vect.copy()
@@ -574,11 +695,11 @@ with tqdm(total=int(mthr/dthr)+1) as pbar:
         pbar.update(1)
 
 print("Done!")
-y_thresholded = unvectorize_matrix(DT @ y_fin, y_sparse_tls_cov.shape)
+y_error_cov = unvectorize_matrix(np.abs(DT @ y_fin), y_sparse_tls_cov.shape)
 
 #print(vals)
 
-sns_plot = sns.heatmap(np.abs(y_thresholded - 0*y_sparse_tls_cov))
+sns_plot = sns.heatmap(np.abs(np.tril(y_error_cov, -1)))
 fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "y_thresholded.png")
+fig_stc.savefig(DATA_DIR / "y_cov.png")
 plt.clf()

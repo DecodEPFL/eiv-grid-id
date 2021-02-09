@@ -144,3 +144,22 @@ def elimination_matrix(n):
         idxs.append(u)
     res = -np.delete(res, idxs, axis=0) / 2
     return res
+
+
+def undelete(m: np.array, idx: np.array, axis: int = 0) -> np.array:
+    """
+    Insert zero rows or columns so that they end up at the indexes given by idx.
+    This is the inverse operation for np.delete
+
+    :param m: the matrix in which rows or columns are to be added
+    :param idx: array of indexes when the rows or columns need to be inserted
+    :return: new array with inserted rows or columns
+    """
+    idx = np.sort(idx).astype(int)
+    if axis == 0:
+        for i in idx:
+            m = np.vstack((m[:i, :], np.zeros((1, m.shape[1])), m[i:, :]))
+    elif axis == 1:
+        for i in idx:
+            m = np.hstack((m[:, :i], np.zeros((m.shape[0], 1)), m[:, i:]))
+    return m
