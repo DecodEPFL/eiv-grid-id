@@ -53,7 +53,7 @@ def map_error(y: np.array, y_hat: np.array) -> float:
     """
     y_non_zero = y[y != 0]
     y_hat_non_zero = y_hat[y != 0]
-    return float(np.mean(np.abs(y_non_zero - y_hat_non_zero) / np.abs(y_non_zero))) * 100
+    return np.linalg.norm(np.abs(y_non_zero - y_hat_non_zero)) / np.linalg.norm(np.abs(y_non_zero)) * 100
 
 
 @dataclass

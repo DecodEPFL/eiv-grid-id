@@ -7,6 +7,7 @@ import cvxpy
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib as ply
+import proplot
 import tikzplotlib
 
 DEFAULT_SOLVER = 'default'
@@ -41,18 +42,22 @@ def map_color_colormap(name, nitem):
     else:
         return [name for i in range(nitem)]
 
-def plot_heatmap(m: np.array, name: str):
+
+def plot_heatmap(m: np.array, name: str, minval=None, maxval=None, colormap=proplot.Colormap("fire")):
     """
     Plots the heatmap of the absolute or magnitude value of a matrix.
     Saves the result as [name].png. Also saves the matrix itself into a npz file.
 
     :param m: matrix to plot, represented as a numpy array
     :param name: name of the file to save the plot in
+    :param minval: minimum value
+    :param maxval: maximum value
+    :param colormap: color map used to plot the matrix
     """
     data_file = {'m': m}
     np.savez(DATA_DIR / ("simulations_output/plot_data/" + name + ".npz"), **data_file)
 
-    sns_plot = sns.heatmap(np.abs(m))
+    sns_plot = sns.heatmap(np.abs(m), vmin=minval, vmax=maxval, cmap=colormap)
     fig = sns_plot.get_figure()
     fig.savefig(DATA_DIR / (name + ".png"))
     plt.clf()
@@ -83,14 +88,16 @@ def plot_scatter(m: np.array, name: str, labels=None, s=10, colormap='hsv', ar=N
 
     for i in range(m.shape[1]):
         if labels is None or len(labels) != m.shape[1]:
-            ax1.scatter(np.arange(m.shape[0]), m[:, i], s=s, c=cmap[i], marker="o")
+            ax1.plot(np.arange(m.shape[0]), m[:, i], linewidth=0, marker='o', markersize=s, color=cmap[i])
         else:
-            ax1.scatter(np.arange(m.shape[0]), m[:, i], s=s, c=cmap[i], marker="o", label=labels[i])
+            ax1.plot(np.arange(m.shape[0]), m[:, i], linewidth=0,
+                     marker='o', markersize=s, color=cmap[i], label=labels[i])
             plt.legend(loc='center right', bbox_to_anchor=(1.25, 0.5))
     plt.subplots_adjust(right=0.8)
     ax1.set_xticks(np.arange(m.shape[0]), minor=True)
     ax1.grid(which='both', alpha=0.2, linewidth=0.5, axis='x')
     plt.grid(True, which='both', axis='x')
+    plt.grid(False, which='both', axis='y')
     with open(DATA_DIR / ("tikz/" + name + ".tex"), 'w') as f:
         print(tikzplotlib.get_tikz_code(), file=f)
     fig.savefig(DATA_DIR / (name + ".pdf"))

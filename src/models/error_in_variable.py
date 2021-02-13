@@ -97,15 +97,15 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         if p_type == self.DELTA:
             self._d_prior = p_mean if p_mean is not None else 0
             if p_var is not None:
-                self._d_prior_mat = sparse.csc_matrix(p_var)
+                self._d_prior_mat = sparse.csr_matrix(p_var)
         elif p_type == self.LAPLACE:
             self._l_prior = p_mean if p_mean is not None else 0
             if p_var is not None:
-                self._l_prior_mat = sparse.csc_matrix(p_var)
+                self._l_prior_mat = sparse.csr_matrix(p_var)
         elif p_type == self.GAUSS:
             self._g_prior = p_mean if p_mean is not None else 0
             if p_var is not None:
-                self._g_prior_mat = sparse.csc_matrix(p_var)
+                self._g_prior_mat = sparse.csr_matrix(p_var)
         return
 
     def _penalty(self, y):
@@ -119,21 +119,21 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         # l0 penalty
         if self._d_prior is not None:
             if self._d_prior_mat is not None:
-                pen = pen + np.linalg.norm(self._d_prior_mat @ (y - self._d_prior), 0)
+                pen = pen + np.linalg.norm(self._d_prior_mat @ y - self._d_prior, 0)
             else:
                 pen = pen + np.linalg.norm(y - self._d_prior, 0)
 
         # l1 penalty
         if self._l_prior is not None:
             if self._l_prior_mat is not None:
-                pen = pen + np.linalg.norm(self._l_prior_mat @ (y - self._l_prior), 1)
+                pen = pen + np.linalg.norm(self._l_prior_mat @ y - self._l_prior, 1)
             else:
                 pen = pen + np.linalg.norm(y - self._l_prior, 1)
 
         # l2 penalty
         if self._g_prior is not None:
             if self._g_prior_mat is not None:
-                pen = pen + np.linalg.norm(self._g_prior_mat @ (y - self._g_prior), 2)
+                pen = pen + np.linalg.norm(self._g_prior_mat @ y - self._g_prior, 2)
             else:
                 pen = pen + np.linalg.norm(y - self._g_prior, 2)
 
@@ -153,13 +153,15 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
         # l0 penalty
         if self._d_prior is not None:
-            W = sparse.diags(np.divide(1, np.abs(y - self._d_prior) + self.num_stability_param), format='csr')
             if self._d_prior_mat is not None:
-                M = W @ self._d_prior_mat @ W
-                mat = mat + M
+                W = sparse.diags(np.divide(1, np.abs(self._d_prior_mat @ y - self._d_prior)
+                                           + self.num_stability_param), format='csr')
+                M = self._d_prior_mat.T @ W @ W
+                mat = mat + M @ self._d_prior_mat
                 if not np.all(self._d_prior == 0):
                     vec = vec + M @ self._d_prior
             else:
+                W = sparse.diags(np.divide(1, np.abs(y - self._d_prior) + self.num_stability_param), format='csr')
                 M = W @ W
                 mat = mat + M
                 if not np.all(self._d_prior == 0):
@@ -168,10 +170,10 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         # l1 penalty
         if self._l_prior is not None:
             if self._l_prior_mat is not None:
-                W = sparse.diags(np.sqrt(np.divide(1, np.abs(y - self._l_prior) + self.num_stability_param)),
-                                 format='csr')
-                M = W @ self._l_prior_mat @ W
-                mat = mat + M
+                W = sparse.diags(np.divide(1, np.abs(self._l_prior_mat @ y - self._l_prior)
+                                           + self.num_stability_param), format='csr')
+                M = self._l_prior_mat.T @ W
+                mat = mat + M @ self._l_prior_mat
                 if not np.all(self._l_prior == 0):
                     vec = vec + M @ self._l_prior
             else:
@@ -183,9 +185,9 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         # l2 penalty
         if self._g_prior is not None:
             if self._g_prior_mat is not None:
-                mat = mat + self._g_prior_mat
+                mat = mat + self._g_prior_mat.T @ self._g_prior_mat
                 if not np.all(self._g_prior == 0):
-                    vec = vec + self._g_prior_mat @ self._g_prior
+                    vec = vec + self._g_prior_mat.T @ self._g_prior
             else:
                 mat = mat + sparse.eye(y.shape[0])
                 if not np.all(self._g_prior == 0):
