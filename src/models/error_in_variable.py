@@ -349,7 +349,8 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
         # Block 2x2 matrix F for real y
         return np.block([[F_tls_r.toarray(), F_tls_ir.toarray()], [F_tls_ir.toarray(), F_tls_i.toarray()]])
 
-    def bias_and_variance(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
+    def bias_and_variance(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array,
+                          y_mat: np.array, Ftls: np.array = None):
         # Initialization of parameters
         samples, n = x.shape
         E = elimination_matrix(n)
@@ -361,7 +362,8 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             y = make_real_vector(vectorize_matrix(y_mat))
 
         # Get unregularized inverse covariance (equal to fisher information matrix)
-        Ftls = sparse.csc_matrix(self.fisher_info(x, z, x_cov, y_cov, y_mat))
+        if Ftls is None:
+            Ftls = sparse.csc_matrix(self.fisher_info(x, z, x_cov, y_cov, y_mat))
 
         # Create regularization parameters
         M, mu = self._penalty_params(y)

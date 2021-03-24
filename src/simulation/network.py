@@ -58,7 +58,7 @@ def add_load_power_control(net: pp.pandapowerNet, load_p: np.array, load_q: np.a
     """
     def add_single_load_controller(network, variable, data_feed):
         controlled_net = network.deepcopy()
-        load_df = DFData(pd.DataFrame(data_feed))
+        load_df = DFData(pd.DataFrame(data_feed, columns=network.load.index))
         ConstControl(controlled_net, element='load', element_index=network.load.index,
                      variable=variable, data_source=load_df, profile_name=network.load.index)
         return controlled_net
