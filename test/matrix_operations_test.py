@@ -1,7 +1,8 @@
 import numpy as np
 
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, unvectorize_matrix, \
-    make_complex_vector, transformation_matrix, duplication_matrix, elimination_matrix, undelete
+    make_complex_vector, transformation_matrix, duplication_matrix, elimination_sym_matrix, elimination_lap_matrix, \
+    undelete
 
 
 def test_make_real_matrix():
@@ -75,15 +76,17 @@ def test_elimination_matrix():
         [-1, 4, -3],
         [-1, -3, 4],
     ])
+    v = np.array([2, -1, -1, 4, -3, 4])
+    np.testing.assert_equal(v, elimination_sym_matrix(3) @ vectorize_matrix(m))
     v = np.array([1, 1, 3])
-    np.testing.assert_equal(v, elimination_matrix(3) @ vectorize_matrix(m))
+    np.testing.assert_equal(v, elimination_lap_matrix(3) @ elimination_sym_matrix(3) @ vectorize_matrix(m))
 
 
 def test_elimination_duplication():
     m = unvectorize_matrix(np.arange(64), (8, 8))
     m = m + m.T
     DT = duplication_matrix(8) @ transformation_matrix(8)
-    E = elimination_matrix(8)
+    E = elimination_lap_matrix(8) @ elimination_sym_matrix(8)
     for i in range(8):
         m[i, i] = 0
         m[i, i] = -sum(m[i, :])
@@ -98,3 +101,4 @@ def test_undelete():
     m = np.delete(np.delete(m, idx, axis=1), idx, axis=0)
     m = undelete(undelete(m, idx, axis=1), idx, axis=0)
     np.testing.assert_equal(mog, m)
+

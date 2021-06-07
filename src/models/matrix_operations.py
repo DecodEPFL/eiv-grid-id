@@ -128,22 +128,33 @@ def transformation_matrix(n):
     return res
 
 
-def elimination_matrix(n):
+def elimination_sym_matrix(n):
     """
-    Computes the matrix such that ve(M) = E vec(M), with M a symmetric LAPLACIAN n-by-n matrix.
+    Computes the matrix such that vech(M) = E vec(M), with M a symmetric n-by-n matrix.
+    This matrix eliminates all upper triangular elements.
+
+    :param n: size of both dimensions of the original n-by-n matrix
+    :return: elimination matrix as numpy array
+    """
+    res = duplication_matrix(n).astype('float').T
+    return np.diag(np.divide(1, np.sum(res, axis=1))) @ res
+
+
+def elimination_lap_matrix(n):
+    """
+    Computes the matrix such that ve(M) = E vech(M), with M a symmetric LAPLACIAN n-by-n matrix.
     This matrix essentially eliminates all diagonal elements
     and averages corresponding upper and lower triangular elements.
 
     :param n: size of both dimensions of the original n-by-n matrix
     :return: elimination matrix as numpy array
     """
-    res = duplication_matrix(n).astype('float').T
     idxs = []
     for i in range(n):
-        u = i * (n + 1) - int(i * (i + 1) / 2)
+        u = int(n * (n + 1) / 2) - int((i + 1) * (i + 2) / 2)
         idxs.append(u)
-    res = -np.delete(res, idxs, axis=0) / 2
-    return res
+
+    return -np.delete(np.eye(int(n * (n + 1) / 2)), idxs, axis=0)
 
 
 def undelete(m: np.array, idx: np.array, axis: int = 0) -> np.array:

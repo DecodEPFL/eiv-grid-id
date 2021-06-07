@@ -10,7 +10,7 @@ from src.identification.error_metrics import fro_error
 from src.models.abstract_models import GridIdentificationModel, CVTrialResult, UnweightedModel, \
     CVModel, IterationStatus
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix, duplication_matrix, transformation_matrix, elimination_matrix
+    unvectorize_matrix, duplication_matrix, transformation_matrix, elimination_sym_matrix, elimination_lap_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
 from src.models.utils import _solve_lme
 
@@ -107,8 +107,9 @@ class BayesianRegression(GridIdentificationModel):
     It uses the Broken adaptive ridge iterative algorithm for l0 and l1 norm regularizations.
     """
 
-    def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50,
-                 verbose=False, enforce_laplacian=True):
+    def __init__(self, lambda_value=10e-2, abs_tol=10e-6, rel_tol=10e-6, max_iterations=50, verbose=False,
+                 enforce_laplacian=True, dt_matrix_builder=lambda n: duplication_matrix(n) @ transformation_matrix(n),
+                 e_matrix_builder=lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)):
         """
         :param lambda_value: initial or fixed sparsity parameter
         :param abs_tol: absolute change of cost function value for which the algorithm stops
@@ -133,6 +134,9 @@ class BayesianRegression(GridIdentificationModel):
         self._rel_tol = rel_tol
         self._max_iterations = max_iterations
         self.enforce_y_cons = enforce_laplacian
+
+        self._transformation_matrix = dt_matrix_builder
+        self._elimination_matrix = e_matrix_builder
 
     # Static properties
     DELTA = "Krondelta"
@@ -210,42 +214,44 @@ class BayesianRegression(GridIdentificationModel):
 
         # l0 penalty
         if self._d_prior is not None:
-            W = sparse.diags(np.divide(1, np.abs(y - self._d_prior) + self.num_stability_param), format='csr')
             if self._d_prior_mat is not None:
-                M = W @ self._d_prior_mat @ W
-                mat = mat + M
-                if not self._d_prior == 0:
+                W = sparse.diags(np.divide(1, np.abs(self._d_prior_mat @ y - self._d_prior)
+                                           + self.num_stability_param), format='csr')
+                M = self._d_prior_mat.T @ W @ W
+                mat = mat + M @ self._d_prior_mat
+                if not np.all(self._d_prior == 0):
                     vec = vec + M @ self._d_prior
             else:
+                W = sparse.diags(np.divide(1, np.abs(y - self._d_prior) + self.num_stability_param), format='csr')
                 M = W @ W
                 mat = mat + M
-                if not self._d_prior == 0:
+                if not np.all(self._d_prior == 0):
                     vec = vec + M @ self._d_prior
 
         # l1 penalty
         if self._l_prior is not None:
             if self._l_prior_mat is not None:
-                W = sparse.diags(np.sqrt(np.divide(1, np.abs(y - self._l_prior) + self.num_stability_param)),
-                                 format='csr')
-                M = W @ self._l_prior_mat @ W
-                mat = mat + M
-                if not self._l_prior == 0:
+                W = sparse.diags(np.divide(1, np.abs(self._l_prior_mat @ y - self._l_prior)
+                                           + self.num_stability_param), format='csr')
+                M = self._l_prior_mat.T @ W
+                mat = mat + M @ self._l_prior_mat
+                if not np.all(self._l_prior == 0):
                     vec = vec + M @ self._l_prior
             else:
                 M = sparse.diags(np.divide(1, np.abs(y - self._l_prior) + self.num_stability_param), format='csr')
                 mat = mat + M
-                if not self._l_prior == 0:
+                if not np.all(self._l_prior == 0):
                     vec = vec + M @ self._l_prior
 
         # l2 penalty
         if self._g_prior is not None:
             if self._g_prior_mat is not None:
-                mat = mat + self._g_prior_mat
-                if not self._g_prior == 0:
-                    vec = vec + self._g_prior_mat @ self._g_prior
+                mat = mat + self._g_prior_mat.T @ self._g_prior_mat
+                if not np.all(self._g_prior == 0):
+                    vec = vec + self._g_prior_mat.T @ self._g_prior
             else:
                 mat = mat + sparse.eye(y.shape[0])
-                if not self._g_prior == 0:
+                if not np.all(self._g_prior == 0):
                     vec = vec + self._g_prior
 
         return mat, vec
@@ -268,8 +274,8 @@ class BayesianRegression(GridIdentificationModel):
 
         #Copy data
         samples, n = x.shape
-        DT = duplication_matrix(n) @ transformation_matrix(n)
-        E = elimination_matrix(n)
+        DT = self._transformation_matrix(n)
+        E = self._elimination_matrix(n)
 
         if self.enforce_y_cons:
             A = make_real_matrix(np.kron(np.eye(n), x) @ DT)

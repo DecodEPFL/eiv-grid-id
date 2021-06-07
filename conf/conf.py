@@ -10,4 +10,4 @@ TEST_SIM_DIR = ROOT_DIR / "test" / "data" / "simulations_output"
 GPU_AVAILABLE = True
 # Use this to switch GPU if one is in use.
 # If all GPUs are used you are in bad luck, wait for your turn
-CUDA_DEVICE_USED = 1
+CUDA_DEVICE_USED = 3
