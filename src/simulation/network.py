@@ -104,9 +104,6 @@ def make_y_bus_3ph(net: pp.pandapowerNet) -> np.array:
     y_bus0 = run_net['_ppc0']['internal']['Ybus'].todense()
     y_bus1 = run_net['_ppc1']['internal']['Ybus'].todense()
     y_bus2 = run_net['_ppc2']['internal']['Ybus'].todense()
-    print(np.round(y_bus0))
-    print(np.round(y_bus1))
-    print(np.round(y_bus2))
 
     y_012 = np.kron(y_bus0, np.diag([1, 0, 0])) + np.kron(y_bus1, np.diag([0, 1, 0])) \
         + np.kron(y_bus1, np.diag([0, 0, 1]))

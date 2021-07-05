@@ -1,7 +1,7 @@
 from typing import Tuple
 
 import numpy as np
-import scipy as sp
+import scipy.sparse as sp
 
 """
     Useful function for operations on matrices and vectorization
@@ -62,25 +62,36 @@ def make_complex_vector(v: np.array) -> np.array:
     return v_complex
 
 
-def make_real_matrix(m: np.array) -> np.array:
+def make_real_matrix(m):
     """
     Transforms a complex matrix into a block 2x2 matrix of its real and imaginary part
 
-    :param m: complex matrix as numpy array
-    :return: block 2x2 real matrix as numpy array
+    :param m: complex matrix as numpy/scipy array
+    :return: block 2x2 real matrix as numpy/scipy array
     """
-    return np.block([
-        [np.real(m), -np.imag(m)],
-        [np.imag(m), np.real(m)]
-    ])
+    type_m = type(m)
+    if type_m is sp.csr_matrix or type_m is sp.csc_matrix or type_m is sp.coo_matrix:
+        if type(m.real) is not type_m or type(m.imag) is not type_m:  # Make sure scipy doesn't bug
+            real = type_m(m.real)
+            imag = type_m(m.imag)
+        else:
+            real = m.real
+            imag = m.imag
+
+        return sp.bmat([[real, -imag], [imag, real]], format=m.format)
+    else:
+        return np.block([
+            [np.real(m), -np.imag(m)],
+            [np.imag(m), np.real(m)]
+        ])
 
 
-def make_complex_matrix(m: np.array) -> np.array:
+def make_complex_matrix(m):
     """
     Transforms a block 2x2 matrix of real and imaginary part into a complex matrix
 
-    :param m: block 2x2 real matrix as numpy array
-    :return: complex matrix as numpy array
+    :param m: block 2x2 real matrix as numpy/scipy array
+    :return: complex matrix as numpy/scipy array
     """
     return m[:m.shape[0]/2, :m.shape[1]/2] + 1j * m[m.shape[0]/2:, :m.shape[1]/2]
 

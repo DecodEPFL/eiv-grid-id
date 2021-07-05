@@ -219,16 +219,16 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
 
         #Copy data
         samples, n = x.shape
-        DT = self._transformation_matrix(n)
-        E = self._elimination_matrix(n)
+        DT = sparse.csr_matrix(self._transformation_matrix(n))
+        E = sparse.csr_matrix(self._elimination_matrix(n))
 
         if self.enforce_y_cons:
-            A = make_real_matrix(np.kron(np.eye(n), x) @ DT)
+            A = make_real_matrix(sparse.kron(sparse.eye(n), x, format='csr') @ DT)
             y = make_real_vector(E @ vectorize_matrix(y_init))
         else:
-            A = make_real_matrix(np.kron(np.eye(n), x))
+            A = make_real_matrix(sparse.kron(sparse.eye(n), x, format='csr'))
             y = make_real_vector(vectorize_matrix(y_init))
-        dA = np.zeros(A.shape)
+        dA = sparse.csr_matrix(np.zeros(A.shape))
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(z))
         #AmdA = sparse.csc_matrix(A - dA)
@@ -264,11 +264,11 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             da = _solve_lme(sys_matrix, sys_vector).squeeze()
 
             # Create dA from da
-            e_qp = unvectorize_matrix(make_complex_vector(da), x.shape)
+            e_qp = sparse.csr_matrix(unvectorize_matrix(make_complex_vector(da), x.shape), dtype=np.cfloat)
             if self.enforce_y_cons:
-                dA = make_real_matrix(np.kron(np.eye(n), e_qp) @ DT)
+                dA = make_real_matrix(sparse.kron(sparse.eye(n), e_qp, format='csr') @ DT)
             else:
-                dA = make_real_matrix(np.kron(np.eye(n), e_qp))
+                dA = make_real_matrix(sparse.kron(sparse.eye(n), e_qp, format='csr'))
 
             # Update y
             M, mu = self._penalty_params(y)
@@ -283,7 +283,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
             self.tmp.append(l)
 
             # Update cost function
-            db = b - (A - dA) @ y
+            db = (b - AmdA @ y).squeeze()
             target = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da)) + l * self._penalty(y)
             self._iterations.append(IterationStatus(it, y_mat, target))
 

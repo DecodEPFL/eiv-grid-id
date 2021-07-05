@@ -3,7 +3,7 @@ from typing import Tuple
 import cvxpy as cp
 import numpy as np
 from scipy import sparse
-from numpy.linalg import inv
+from scipy.linalg import pinv
 from tqdm import tqdm
 
 from src.identification.error_metrics import fro_error
@@ -39,7 +39,7 @@ class ComplexRegression(GridIdentificationModel, UnweightedModel):
         :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
         :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
         """
-        self._admittance_matrix = inv(x.conj().T @ x) @ x.conj().T @ z
+        self._admittance_matrix = pinv(x) @ z  # inv(x.conj().T @ x) @ x.conj().T @ z
 
 
 class ComplexLasso(GridIdentificationModel, UnweightedModel, CVModel):
@@ -274,16 +274,16 @@ class BayesianRegression(GridIdentificationModel):
 
         #Copy data
         samples, n = x.shape
-        DT = self._transformation_matrix(n)
-        E = self._elimination_matrix(n)
+        DT = sparse.csr_matrix(self._transformation_matrix(n))
+        E = sparse.csr_matrix(self._elimination_matrix(n))
 
         if self.enforce_y_cons:
-            A = make_real_matrix(np.kron(np.eye(n), x) @ DT)
+            A = make_real_matrix(sparse.kron(sparse.eye(n), x, format='csr') @ DT)
             y = make_real_vector(E @ vectorize_matrix(y_init))
         else:
-            A = make_real_matrix(np.kron(np.eye(n), x))
+            A = make_real_matrix(sparse.kron(sparse.eye(n), x, format='csr'))
             y = make_real_vector(vectorize_matrix(y_init))
-        dA = np.zeros(A.shape)
+        dA = sparse.csr_matrix(np.zeros(A.shape))
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(z))
         #AmdA = sparse.csc_matrix(A - dA)

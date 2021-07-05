@@ -185,9 +185,7 @@ class NetData3P(pp.pandapowerNet):
             self.create_line(l.start_bus, l.end_bus, l.length, l.t)
         return self
 
-
 # Full 56 bus network
-
 bolognani_bus56 = \
     [BusData(1, 1, 0.160, 0.080, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
      BusData(2, 1, 0.020, 0.010, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),

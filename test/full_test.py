@@ -51,7 +51,8 @@ from src.models.utils import plot_heatmap, plot_scatter, plot_series
 
 
 def undel_kron(m, idx):
-    return undelete(undelete(m.copy(), idx, axis=1), idx, axis=0)
+    mat = np.tril(m, -1) + np.tril(m, -1).T
+    return m#undelete(undelete(mat.copy(), idx, axis=1), idx, axis=0)
 
 # %% md
 
@@ -68,16 +69,30 @@ def undel_kron(m, idx):
 
 P_PROFILE = "Electricity_Profile_RNEplus.csv"
 
-"""
+
 bus_data = bolognani_bus56
 for b in bus_data:
     b.id = b.id - 1
 
 net_data = bolognani_net56
+# PCC cannot be reduced, else all the loads would need to be constant
+observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
+                  32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
+observed_nodes = list(range(1, 57))
+hidden_nodes = list(set(range(56)) - set(np.array(observed_nodes)-1))
+
+constant_power_hidden_nodes = False
+use_laplacian = False
+# PCC needs to be sub-Kron reduced if not removing the common mode
+# With data centering its voltage column is just zeros
+if not use_laplacian:
+    hidden_nodes.append(55)
+
 for l in net_data:
     l.length = l.length * 0.3048 / 1000
     l.start_bus = l.start_bus - 1
     l.end_bus = l.end_bus - 1
+
 """
 bus_data = cigre_mv_feeder1_bus
 for b in bus_data:
@@ -87,9 +102,7 @@ net_data = cigre_mv_feeder1_net
 for l in net_data:
     l.start_bus = l.start_bus - 1
     l.end_bus = l.end_bus - 1
-
-hidden_nodes = []#[3, 4, 7]
-constant_power_hidden_nodes = False
+"""
 
 # %%
 
@@ -97,27 +110,27 @@ net = NetData(bus_data, net_data)
 nodes = len(bus_data)
 
 selected_weeks = np.array([12])
-days = len(selected_weeks)*1
+days = len(selected_weeks)*30
 steps = 15000 # 500
 load_cv = 0.0
-current_magnitude_sd = 1e-3
-voltage_magnitude_sd = 1e-3
-phase_sd = 1e-3#0.01*np.pi/180
+current_magnitude_sd = 1e-4
+voltage_magnitude_sd = 1e-4
+phase_sd = 1e-4#0.01*np.pi/180
 fmeas = 100 # [Hz] # 50
 
-max_plot_y = 0.2*18000
-max_plot_err = 0.2*5000
+max_plot_y = 18000
+max_plot_err = 5000
 
 np.random.seed(11)
 
 # %%
 
-redo_loads = True
-redo_netsim = True
-redo_noise = True
-redo_standard_methods = True
+redo_loads = False
+redo_netsim = False
+redo_noise = False
+redo_standard_methods = False
 redo_STLS = True
-max_iterations = 50
+max_iterations = 0
 redo_covariance = False
 
 # %% md
@@ -171,9 +184,8 @@ if redo_loads:
     print(q_mean_percentile)
 
     print("Assigning random households to nodes...")
-    load_p = np.zeros((pload_profile.shape[0], len(net.load.p_mw)))
-    load_q = np.zeros((qload_profile.shape[0], len(net.load.q_mvar)))
-    print(np.tile(np.array(net.load.p_mw), (pload_profile.shape[0], 1))) #.reshape((1, len(net.load.p_mw)))
+    load_p = np.tile(net.load.p_mw, (pload_profile.shape[0], 1))
+    load_q = np.tile(net.load.q_mvar, (pload_profile.shape[0], 1))
     for i in tqdm(range(len(net.load.p_mw))):
         if net.load.bus[net.load.p_mw.index[i]] in hidden_nodes and constant_power_hidden_nodes:
             print("node " + str(net.load.bus[net.load.p_mw.index[i]]) + " with load # " + str(i) + " is hidden")
@@ -249,12 +261,6 @@ print("Done!")
 
 # %% md
 
-# TEST NON-LAPLACIAN
-
-shunt_test = (1-0.5j)*100000/20000/20000 #  100kW @ 20 kV
-y_bus = y_bus + shunt_test*np.eye(nodes)
-current = voltage @ y_bus
-
 # Noise Generation
 """
 # Extrapolating voltages from 1 per minute to 100 per seconds linearly.
@@ -269,10 +275,6 @@ current = voltage @ y_bus
 """
 # %%
 
-save_voltage = voltage
-save_current = current
-
-mean_voltage = 0
 if redo_noise:
     print("Adding noise and filtering...")
     # linear interpolation of missing timesteps, looped to reduce memory usage
@@ -288,8 +290,7 @@ if redo_noise:
             tmp_voltage[t, i] = np.sum(noisy_voltage[t*fparam:(t+1)*fparam]).copy()/fparam
             tmp_current[t, i] = np.sum(noisy_current[t*fparam:(t+1)*fparam]).copy()/fparam
 
-    mean_voltage = np.mean(tmp_voltage)
-    noisy_voltage = tmp_voltage - np.mean(tmp_voltage)
+    noisy_voltage = tmp_voltage
     noisy_current = tmp_current
     print("Done!")
 
@@ -308,12 +309,12 @@ if redo_noise:
             tmp_voltage[t, i] = np.sum(voltage_i[t*fparam:(t+1)*fparam]).copy()/fparam
             tmp_current[t, i] = np.sum(current_i[t*fparam:(t+1)*fparam]).copy()/fparam
 
-    voltage = tmp_voltage - np.mean(tmp_voltage)
+    voltage = tmp_voltage
     current = tmp_current
     print("Done!")
 
     print("Saving filtered data...")
-    sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'j': current, 'w': voltage, 'y': y_bus, 'm': mean_voltage}
+    sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'j': current, 'w': voltage, 'y': y_bus}
     np.savez(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"), **sim_IV)
     print("Done!")
 
@@ -324,17 +325,19 @@ noisy_current = sim_IV["i"]
 voltage = sim_IV["w"]
 current = sim_IV["j"]
 y_bus = sim_IV["y"]
-mean_voltage = sim_IV["m"]
 voltage_magnitude_sd = voltage_magnitude_sd/np.sqrt(fparam)
 current_magnitude_sd = current_magnitude_sd/np.sqrt(fparam)
 phase_sd = phase_sd/np.sqrt(fparam)
 print("Done!")
 
+#current = current.conj() * voltage
+#noisy_current = noisy_current.conj() * voltage
+
 # %% md
 
 # Kron reduction of 0 load nodes
 """
-# Hidden nodes have no load and are very hard to estimate.
+# Hidden nodes and nodes with no load and are very hard to estimate.
 # Kron reduction is a technique to obtain an equivalent graph without these nodes.
 # This technique is used to remove them.
 #
@@ -343,42 +346,52 @@ print("Done!")
 """
 # %%
 
-np.set_printoptions(threshold=np.inf)
-#print(save_voltage - voltage)
-#print(save_current - current)
-
-print("Noise-free TLS test:")
-tls = TotalLeastSquares()
-tls.fit(voltage, current)
-y_new = tls.fitted_admittance_matrix.copy()
-print(error_metrics(y_bus, y_new))
-
-print("Kron reducing loads with no current...")
-# y_new = y_bus.copy()
+print("Kron and sub-Kron reducing hidden nodes, PCC, and loads with no current...")
 idx_todel = []
+idx_tored = []
+shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
 for i in range(nodes):
     idx = net.load.bus[net.load.bus == i].index.values[0]
-    if ( np.sqrt(net.load.p_mw[idx]*net.load.p_mw[idx] + net.load.q_mvar[idx]*net.load.q_mvar[idx]) == 0 \
-         or idx in hidden_nodes) and i not in net.ext_grid.bus.values:
+    if ( np.sqrt(net.load.p_mw[idx]*net.load.p_mw[idx] + net.load.q_mvar[idx]*net.load.q_mvar[idx]) == 0
+         and i not in net.ext_grid.bus.values) or idx in hidden_nodes:
 
+        # Kron reducing for normal node, subKron reduction for ext_grid connection
+        if i not in net.ext_grid.bus.values:
+            idx_tored.append(i)
         idx_todel.append(i)
-        # for j in range(nodes):
-        #     for k in range(nodes):
-        #         if j is not i and k is not i:
-        #             y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
-print(idx_todel)
+
+        shunts[idx] = np.divide(np.mean(current[:, idx], axis=0),
+                                np.mean(voltage[:, idx], axis=0))
+
+# Kron reduction
+y_new = y_bus.copy() + np.diag(shunts)
+for i in idx_tored:
+    for j in range(nodes):
+        for k in range(nodes):
+            if j is not i and k is not i:
+                y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
+
+power = np.delete(voltage * current.conj(), idx_todel, axis=1)
+
+if use_laplacian:
+    noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
+else:
+    power = power - np.tile(np.mean(power, axis=0), (power.shape[0], 1))
+    voltage = voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
+    current = current - np.tile(np.mean(current, axis=0), (current.shape[0], 1))
+    noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
+    noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
+
+print("reduced nodes: " + str(np.array(idx_todel)+1))
 noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
 noisy_current = np.delete(noisy_current, idx_todel, axis=1)
 voltage = np.delete(voltage, idx_todel, axis=1)
 current = np.delete(current, idx_todel, axis=1)
-# y_bus = np.delete(np.delete(y_new, idx_todel, axis=1), idx_todel, axis=0)
+y_bus = np.delete(np.delete(y_new, idx_todel, axis=1), idx_todel, axis=0)
+#y_bus = sp.linalg.pinv(voltage) @ current
+#y_bus[np.abs(y_bus) < 0.01] = 0
 pmu_ratings = np.delete(pmu_ratings, idx_todel)
 newnodes = nodes - len(idx_todel)
-
-# Get new y_bus from noise-free identification
-tls = TotalLeastSquares()
-tls.fit(voltage, current)
-y_bus = tls.fitted_admittance_matrix.copy()
 print("Done!")
 
 q, r = np.linalg.qr(voltage)
@@ -387,12 +400,11 @@ plot_series(np.expand_dims(stcplt.to_numpy(), axis=1), 'correlations', s=3, colo
 
 # %%
 
-plot_heatmap(undel_kron(np.tril(np.abs(y_bus), -1) + np.tril(np.abs(y_bus), -1).T, idx_todel),
+plot_heatmap(undel_kron(np.abs(y_bus), idx_todel),
              "y_bus", minval=0, maxval=max_plot_y)
 
 # %%
 
-use_laplacian = False
 if use_laplacian:
     DT = duplication_matrix(newnodes) @ transformation_matrix(newnodes)
     E = elimination_lap_matrix(newnodes) @ elimination_sym_matrix(newnodes)
@@ -415,6 +427,11 @@ if redo_standard_methods:
     print("OLS identification...")
     ols = ComplexRegression()
     ols.fit(noisy_voltage, noisy_current)
+    #ols.fit(voltage, current.conj() * voltage)
+
+    # Singular if centered, not accurate if common mode in
+    # ols.fit(voltage, power)
+    #ols.fit(voltage - np.mean(voltage), current)
     y_ols = ols.fitted_admittance_matrix
     print("Done!")
 
@@ -431,6 +448,10 @@ if redo_standard_methods:
     print("TLS identification...")
     tls = TotalLeastSquares()
     tls.fit(noisy_voltage, noisy_current)
+    #tls.fit(noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1)),
+    #        noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1)))
+    #tls.fit(voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1)),
+    #        current - np.tile(np.mean(current, axis=0), (current.shape[0], 1)))
     y_tls = tls.fitted_admittance_matrix
     print("Done!")
 
@@ -450,7 +471,7 @@ if redo_standard_methods:
         lasso = BayesianRegression(lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
                                    dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
 
-    if True:#max_iterations > 0:
+    if max_iterations > 0:
         # Create various priors, try with tls !!
         y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
         tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
@@ -467,6 +488,8 @@ if redo_standard_methods:
         lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
         y_lasso = lasso.fitted_admittance_matrix
         print("Done!")
+    else:
+        y_lasso = y_ols
 
 
     print("Saving standard results...")
@@ -486,25 +509,24 @@ ols_metrics = error_metrics(y_bus, y_ols)
 print(ols_metrics)
 with open(DATA_DIR / 'ols_error_metrics.txt', 'w') as f:
     print(ols_metrics, file=f)
-plot_heatmap(undel_kron(np.abs(y_ols) - np.diag(np.diag(np.abs(y_ols))), idx_todel),
+plot_heatmap(undel_kron(np.abs(y_ols), idx_todel),
              "y_ols", minval=0, maxval=max_plot_y)
 
 tls_metrics = error_metrics(y_bus, y_tls)
 print(tls_metrics)
 with open(DATA_DIR / 'tls_error_metrics.txt', 'w') as f:
     print(tls_metrics, file=f)
-plot_heatmap(undel_kron(np.abs(y_tls) - np.diag(np.diag(np.abs(y_tls))), idx_todel),
+plot_heatmap(undel_kron(np.abs(y_tls), idx_todel),
              "y_tls", minval=0, maxval=max_plot_y)
 
 lasso_metrics = error_metrics(y_bus, y_lasso)
 print(lasso_metrics)
 with open(DATA_DIR / 'lasso_error_metrics.txt', 'w') as f:
     print(lasso_metrics, file=f)
-plot_heatmap(undel_kron(np.tril(np.abs(y_lasso), -1) + np.tril(np.abs(y_lasso), -1).T, idx_todel),
+plot_heatmap(undel_kron(np.abs(y_lasso), idx_todel),
              "y_lasso", minval=0, maxval=max_plot_y)
 
 print("Done!")
-
 # %% md
 
 # Bayesian priors definition
@@ -525,6 +547,7 @@ print("Done!")
 
 # Make tls solution symmetric
 y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
+y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
 
 # Create adaptive chain network prior
 tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls))), 1.0))
@@ -534,38 +557,69 @@ tls_weights_chain = make_real_vector(E @ ((1+1j)*vectorize_matrix((3 if use_lapl
 tls_weights_chain = np.ones(tls_weights_chain.shape) + (-tls_weights_chain if use_laplacian else tls_weights_chain)
 tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_chain)
 
+tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*vectorize_matrix(np.eye(newnodes)))))
+
 
 
 # Create constraint on the diagonal
 lambdaprime = 200
 contrast_each_row = True
+contrast_diag = False
+
 if contrast_each_row:
-    diag_tls = -np.sum(y_sym_tls - np.diag(np.diag(y_sym_tls)), axis=1)
-    tls_weights_sum = np.zeros((newnodes-1, tls_weights_adaptive.size))
-    for idx in range(newnodes-1):
+    if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:  # TODO: understand this
+        diag_tls = np.diag(y_tls)
+    else:
+        diag_tls = -np.sum(y_sym_tls_ns, axis=1)
+
+    """
+    print("diagonal elements estimation")
+    print(np.divide(np.abs(np.real(diag_tls - bus_diag_L)), np.abs(np.real(bus_diag_L))) +
+          np.divide(np.abs(np.imag(diag_tls - bus_diag_L)), np.abs(np.imag(bus_diag_L))))
+
+    print(bus_diag_L)
+
+    print(np.sum(np.abs(np.real(bus_diag_L))) + np.sum(np.abs(np.imag(bus_diag_L))))
+    print(np.abs(np.sum(np.real(diag_tls - bus_diag_L))) + np.abs(np.sum(np.imag(diag_tls - bus_diag_L))))
+    """
+
+    tls_weights_sum = np.zeros((newnodes, tls_weights_adaptive.size))
+    for idx in range(newnodes):
         # Indices of all entries in the same row
-        y_idx = np.vstack((np.zeros((idx+1, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 2, newnodes))))
+        y_idx = np.vstack((np.zeros((idx, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 1, newnodes))))
         y_idx = E @ vectorize_matrix(y_idx+y_idx.T - 2*np.diag(np.diag(y_idx)))
 
         # Add to the idx's element in first lower diagonal
         tls_weights_sum[idx, :y_idx.size] = \
-            y_idx / np.abs(np.real(diag_tls[idx+1])) * lambdaprime
+            y_idx / np.abs(np.real(diag_tls[idx])) * lambdaprime
         tls_weights_sum[idx, y_idx.size:] = \
-            y_idx / np.abs(np.imag(diag_tls[idx+1])) * lambdaprime
+            y_idx / np.abs(np.imag(diag_tls[idx])) * lambdaprime
 
-    tls_weights_sum = sparse.bmat([[np.diag(tls_weights_all)],
+    tls_weights_sum = sparse.bmat([[np.diag(tls_weights_nondiag)],
                                   [np.abs(sparse.bmat([[tls_weights_sum[:, :int(tls_weights_adaptive.size/2)], None],
                                                        [None, tls_weights_sum[:, int(tls_weights_adaptive.size/2):]]],
                                                        format='csr'))]], format='csr')
 
     tls_centers_sum = np.concatenate((np.zeros((tls_weights_adaptive.size,)),
                                       lambdaprime*make_real_vector((np.sign(np.real(diag_tls)) +
-                                                                   1j*np.sign(np.imag(diag_tls)))[1:])))
+                                                                   1j*np.sign(np.imag(diag_tls))))))
     if not use_laplacian:
         tls_centers_sum = -tls_centers_sum
 
+        if contrast_diag:
+            for idx in range(newnodes):
+                diag_tls_weight = np.diag(np.eye(newnodes)[:, idx]) \
+                                  * lambdaprime * (1/np.abs(np.diag(np.real(y_sym_tls))[idx])
+                                                   + 1j/np.abs(np.diag(np.imag(y_sym_tls))[idx]))
+                diag_weights = np.vstack([np.expand_dims(make_real_vector(E @ vectorize_matrix(np.real(diag_tls_weight))), axis=0),
+                                          np.expand_dims(make_real_vector(1j*E @ vectorize_matrix(np.imag(diag_tls_weight))), axis=0)])
+                tls_weights_sum = sparse.bmat([[tls_weights_sum], [sparse.csr_matrix(diag_weights)]], format='csr')
+
+                tls_centers_sum = np.concatenate((tls_centers_sum, lambdaprime *
+                                                  np.array([np.sign(np.diag(np.real(y_sym_tls))[idx]),
+                                                            np.sign(np.diag(np.imag(y_sym_tls))[idx])])))
+
 else:
-    y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
     total_l1 = np.sum(np.abs(np.real(y_sym_tls_ns)))/2 + 1j*np.sum(np.abs(np.imag(y_sym_tls_ns)))/2 \
         - np.sum(np.abs(np.real(y_sym_tls_ns[np.real(y_sym_tls_ns) > 0]))) \
         - 1j*np.sum(np.abs(np.imag(y_sym_tls_ns[np.imag(y_sym_tls_ns) < 0])))
@@ -644,13 +698,13 @@ for i in range(tls_weights_sum.shape[0]):
 #
 # Covariance matrices of currents and voltages are calculated using the average true noise method.
 """
-# %%
-y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
 
+# %%
 
 abs_tol = 1e-10*1e1
 rel_tol = 1e-10*10e-3
-lam = 8e7#8e10
+lam = 2e13#4e10#8e7
+#lam = 4e11#4e10#8e7
 if use_laplacian:
     sparse_tls_cov = SparseTotalLeastSquare(lambda_value=lam, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations)
 else:
@@ -674,7 +728,7 @@ if max_iterations > 0:
         sparse_tls_cov_multipliers = pd.Series([], dtype='float64')
 
     print("Calculating covariance matrices...")
-    inv_sigma_voltage = average_true_noise_covariance(noisy_voltage + mean_voltage, voltage_magnitude_sd, phase_sd, True)
+    inv_sigma_voltage = average_true_noise_covariance(noisy_voltage, voltage_magnitude_sd, phase_sd, True)
     inv_sigma_current = average_true_noise_covariance(noisy_current, current_magnitude_sd * pmu_ratings, phase_sd, True)
     print("Done!")
 
@@ -727,35 +781,31 @@ estimated_voltage = sim_STLS["v"]
 estimated_current = sim_STLS["i"]
 print("Done!")
 
-print(y_sparse_tls_cov)
-print(y_bus)
-#y_sparse_tls_cov[np.abs(y_sparse_tls_cov) < 0.8*np.abs(y_bus[36, 3])] = 0j
-
 sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
 with open(DATA_DIR / 'sparse_tls_error_metrics.txt', 'w') as f:
     print(sparse_tls_cov_metrics, file=f)
 print(sparse_tls_cov_metrics)
-plot_heatmap(undel_kron(np.tril(np.abs(y_sparse_tls_cov), -1) + np.tril(np.abs(y_sparse_tls_cov), -1).T,
-                        idx_todel), "y_sparse_tls_cov", minval=0, maxval=max_plot_y)
-plot_heatmap(undel_kron(np.tril(np.abs(y_sparse_tls_cov - y_bus), -1) + np.tril(np.abs(y_sparse_tls_cov - y_bus), -1).T,
-                        idx_todel), "y_sparse_tls_cov_errors", minval=0, maxval=max_plot_err)
-plot_heatmap(undel_kron(np.tril(np.abs(y_sparse_tls_cov - y_sym_tls), -1) +
-                        np.tril(np.abs(y_sparse_tls_cov - y_sym_tls), -1).T, idx_todel), "y_sparse_tls_cov_impact")
+plot_heatmap(undel_kron(np.abs(y_sparse_tls_cov), idx_todel),
+             "y_sparse_tls_cov", minval=0, maxval=max_plot_y)
+plot_heatmap(undel_kron(np.abs(y_sparse_tls_cov - y_bus), idx_todel),
+             "y_sparse_tls_cov_errors", minval=0, maxval=max_plot_err)
+plot_heatmap(undel_kron(np.abs(y_sparse_tls_cov - y_sym_tls), idx_todel),
+             "y_sparse_tls_cov_impact")
 
 plot_series(np.expand_dims(sparse_tls_cov_errors.to_numpy(), axis=1), 'errors', s=3, colormap='blue2')
 plot_series(np.expand_dims(sparse_tls_cov_targets[1:].to_numpy(), axis=1), 'targets', s=3, colormap='blue2')
 plot_series(np.expand_dims(sparse_tls_cov_multipliers.to_numpy(), axis=1), 'multipliers', s=3, colormap='blue2')
 
-y_comp_idx = (np.abs(E @ vectorize_matrix(np.abs(y_bus)))) > 0
+y_comp_idx = (np.abs(E @ vectorize_matrix(np.abs(y_bus-np.diag(np.diag(y_bus)))))) > 0
 y_comp = np.array([E @ vectorize_matrix(y_ols), E @ vectorize_matrix(y_tls), E @ vectorize_matrix(y_lasso),
                    E @ vectorize_matrix(y_sparse_tls_cov), E @ vectorize_matrix(y_bus)]).T
 #plot_scatter(np.abs(y_comp[y_comp_idx, :]), 'comparison', s=2,
-#             labels=['OLS', 'TLS', 'Lasso', 'MLE', 'actual'],
+#             labels=['OLS', 'MLE', 'Lasso', 'MAP', 'actual'],
 #             colormap=['navy', 'royalblue', 'forestgreen', 'peru', 'darkred'], ar=1)#8e-4)
 
-plot_scatter(np.abs(y_comp), 'comparison', s=2,
-             labels=['OLS', 'TLS', 'Lasso', 'MLE', 'actual'],
-             colormap=['navy', 'royalblue', 'forestgreen', 'peru', 'darkred'], ar=8e-3)
+plot_scatter(np.abs(y_comp[y_comp_idx, :]), 'comparison', s=2,
+             labels=['OLS', 'MLE', 'Lasso', 'MAP', 'actual'],
+             colormap=['navy', 'royalblue', 'forestgreen', 'peru', 'darkred'], ar=8e-4)
 
 with open(DATA_DIR / 'sparsity_metrics.txt', 'w') as f:
     print("OLS", file=f)
