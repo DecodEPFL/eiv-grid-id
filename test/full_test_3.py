@@ -43,7 +43,7 @@ from src.simulation.load_profile import generate_gaussian_load
 from src.simulation.network import add_load_power_control, make_y_bus, make_y_bus_3ph
 from src.simulation.simulation import run_simulation, get_current_and_voltage, run_simulation_3ph
 from src.simulation.net_templates import NetData3P, test_3phase_bus, test_3phase_net, bolognani_bus56, bolognani_net56, \
-                                         bolognani_bus33, bolognani_net33, cigre_mv_feeder1_bus, cigre_mv_feeder1_net, ieee123_types
+                                         bolognani_bus33, bolognani_net33, cigre_mv_feeder3_bus, cigre_mv_feeder3_net, ieee123_types
 from src.identification.error_metrics import error_metrics, fro_error, rrms_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
 from conf.conf import DATA_DIR
@@ -78,18 +78,11 @@ for l in net_data:
     l.length = l.length * 0.3048 / 1000
     l.start_bus = l.start_bus - 1
     l.end_bus = l.end_bus - 1
-
-bus_data = cigre_mv_feeder1_bus
-for b in bus_data:
-    b.id = b.id - 1
-
-net_data = cigre_mv_feeder1_net
-for l in net_data:
-    l.start_bus = l.start_bus - 1
-    l.end_bus = l.end_bus - 1
 """
-bus_data = test_3phase_bus
-net_data = test_3phase_net
+
+bus_data = cigre_mv_feeder3_bus
+net_data = cigre_mv_feeder3_net
+
 # %%
 
 pd.set_option('display.max_rows', 500)
@@ -107,8 +100,8 @@ voltage_magnitude_sd = 1e-4
 phase_sd = 1e-4#0.01*np.pi/180
 fmeas = 100 # [Hz] # 50
 
-max_plot_y = 18000
-max_plot_err = 5000
+max_plot_y = 3000#18000
+max_plot_err = 500
 
 np.random.seed(11)
 
@@ -366,27 +359,19 @@ print("Done!")
 print("Kron reducing loads with no current...")
 idx_todel = []
 y_new = y_bus.copy()
-#for i in range(nodes-1):
-    #if np.sqrt(bus_data[i].Pd*bus_data[i].Pd + bus_data[i].Pd*bus_data[i].Pd) == 0:
 for idx in net.bus.index:
-    remove_i = (True, True, True)
-
+    # subKron reducing the ext_grid
     if idx in net.ext_grid.bus.values:
-        print(idx)
-        # Kron reducing the ext_grid connection requires to transfer currents to attached nodes
-        # Otherwise OLS works but TLS doesn't like that more current goes out than in and that YV ≠ I
         i_entry = net.bus.index.tolist().index(idx)
 
-        for i in np.arange(3) + 3*i_entry:
-            injected_current = (np.tile(np.expand_dims(voltage[:, i], 1), (1, voltage.shape[1]))
-                                - voltage) @ np.diag(y_bus[:, i])
-            print(injected_current[1, :]) # TODO: should be - current
-            print(y_bus[:, i])
-            print(current[1, :])
-            current = current - injected_current
-            noisy_current = noisy_current - injected_current
-            current[:, i] = 0
+        for ph in range(3):
+            i = 3 * i_entry + ph
+            idx_todel.append(i)
+
+    # Kron reducing passive nodes
     else:
+        remove_i = (True, True, True)
+
         if idx in net.load.bus:
             remove_i = remove_i if net.load.p_mw[net.load.bus[net.load.bus == idx].index.values[0]] == 0 \
                 and net.load.q_mvar[net.load.bus[net.load.bus == idx].index.values[0]] == 0 else (False, False, False)
@@ -401,15 +386,22 @@ for idx in net.bus.index:
                 net.asymmetric_load.p_c_mw[idxload] == 0 and net.asymmetric_load.q_c_mvar[idxload] == 0 \
                 else False
 
-    i_entry = net.bus.index.tolist().index(idx)
-    for ph in range(3):
-        if remove_i[ph]:
-            i = 3*i_entry + ph
-            idx_todel.append(i)
-            for j in range(3*nodes):
-                for k in range(3*nodes):
-                    if j is not i and k is not i:
-                        y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
+        i_entry = net.bus.index.tolist().index(idx)
+        for ph in range(3):
+            if remove_i[ph]:
+                i = 3*i_entry + ph
+                idx_todel.append(i)
+                for j in range(3*nodes):
+                    for k in range(3*nodes):
+                        if j is not i and k is not i:
+                            y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
+
+
+
+voltage = voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
+current = current - np.tile(np.mean(current, axis=0), (current.shape[0], 1))
+noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
+noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
 
 print(idx_todel)
 noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
@@ -421,34 +413,16 @@ pmu_ratings = np.delete(pmu_ratings, idx_todel)
 newnodes = 3*nodes - len(idx_todel)
 DT = duplication_matrix(newnodes) @ transformation_matrix(newnodes)
 E = elimination_lap_matrix(newnodes) @ elimination_sym_matrix(newnodes)
-print(y_bus)
-
-print(np.linalg.norm(voltage @ y_bus - current, "fro"))
-print(voltage[:10,:] @ y_bus - current[:10,:])
-print(current[:10,:])
 print("Done!")
 
 q, r = np.linalg.qr(voltage)
 stcplt = pd.Series(np.log10(np.abs(np.diag(r)[1:]/r[0, 0])).tolist())
 plot_series(np.expand_dims(stcplt.to_numpy(), axis=1), 'correlations', s=3, colormap='blue2')
 
-print(stcplt)
 # %%
 
-plot_heatmap(np.tril(np.abs(y_bus), -1) + np.tril(np.abs(y_bus), -1).T,
-             "y_bus", minval=0, maxval=max_plot_y)
+plot_heatmap(np.abs(y_bus), "y_bus", minval=0, maxval=max_plot_y)
 # %%
-
-print(net.load)
-print(net.asymmetric_load)
-print(net.bus)
-print(noisy_current[0,:])
-print(noisy_voltage[0,:])
-print(np.linalg.norm(noisy_voltage @ y_bus - noisy_current))
-#noisy_voltage[0,:] = noisy_voltage[0,:]-1
-
-#pp.runpp_3ph(net)
-#make_y_bus_3ph(net)
 
 if redo_standard_methods:
 
@@ -464,11 +438,10 @@ if redo_standard_methods:
 
     print("OLS identification...")
     ols = ComplexRegression()
-    ols.fit(voltage, current)
+    ols.fit(noisy_voltage, noisy_current)
     #ols.fit(noisy_current, noisy_voltage)
     y_ols = ols.fitted_admittance_matrix
     #y_ols = np.delete(np.delete(admittance_sequence_to_phase(undel_kron(ols.fitted_admittance_matrix, idx_todel)), idx_todel, axis=1), idx_todel, axis=0)
-    print(y_ols)
     print("Done!")
 
     # %% md
@@ -538,22 +511,19 @@ ols_metrics = error_metrics(y_bus, y_ols)
 print(ols_metrics)
 with open(DATA_DIR / 'ols_error_metrics.txt', 'w') as f:
     print(ols_metrics, file=f)
-plot_heatmap(np.abs(y_ols) - np.diag(np.diag(np.abs(y_ols))),
-             "y_ols", minval=0, maxval=max_plot_y)
+plot_heatmap(np.abs(y_ols), "y_ols", minval=0, maxval=max_plot_y)
 
 tls_metrics = error_metrics(y_bus, y_tls)
 print(tls_metrics)
 with open(DATA_DIR / 'tls_error_metrics.txt', 'w') as f:
     print(tls_metrics, file=f)
-plot_heatmap(np.abs(y_tls) - np.diag(np.diag(np.abs(y_tls))),
-             "y_tls", minval=0, maxval=max_plot_y)
+plot_heatmap(np.abs(y_tls), "y_tls", minval=0, maxval=max_plot_y)
 
 lasso_metrics = error_metrics(y_bus, y_lasso)
 print(lasso_metrics)
 with open(DATA_DIR / 'lasso_error_metrics.txt', 'w') as f:
     print(lasso_metrics, file=f)
-plot_heatmap(np.tril(np.abs(y_lasso), -1) + np.tril(np.abs(y_lasso), -1).T,
-             "y_lasso", minval=0, maxval=max_plot_y)
+plot_heatmap(np.abs(y_lasso), "y_lasso", minval=0, maxval=max_plot_y)
 
 print("Done!")
 

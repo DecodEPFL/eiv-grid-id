@@ -78,7 +78,7 @@ net_data = bolognani_net56
 # PCC cannot be reduced, else all the loads would need to be constant
 observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
                   32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
-observed_nodes = list(range(1, 57))
+#observed_nodes = list(range(1, 57))
 hidden_nodes = list(set(range(56)) - set(np.array(observed_nodes)-1))
 
 constant_power_hidden_nodes = False
@@ -128,9 +128,9 @@ np.random.seed(11)
 redo_loads = False
 redo_netsim = False
 redo_noise = False
-redo_standard_methods = False
+redo_standard_methods = True
 redo_STLS = True
-max_iterations = 0
+max_iterations = 50
 redo_covariance = False
 
 # %% md
@@ -388,8 +388,6 @@ noisy_current = np.delete(noisy_current, idx_todel, axis=1)
 voltage = np.delete(voltage, idx_todel, axis=1)
 current = np.delete(current, idx_todel, axis=1)
 y_bus = np.delete(np.delete(y_new, idx_todel, axis=1), idx_todel, axis=0)
-#y_bus = sp.linalg.pinv(voltage) @ current
-#y_bus[np.abs(y_bus) < 0.01] = 0
 pmu_ratings = np.delete(pmu_ratings, idx_todel)
 newnodes = nodes - len(idx_todel)
 print("Done!")
@@ -564,7 +562,7 @@ tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*v
 # Create constraint on the diagonal
 lambdaprime = 200
 contrast_each_row = True
-contrast_diag = False
+contrast_diag = True
 
 if contrast_each_row:
     if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:  # TODO: understand this
