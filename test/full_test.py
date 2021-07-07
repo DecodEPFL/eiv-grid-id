@@ -39,10 +39,9 @@ from src.models.matrix_operations import make_real_vector, vectorize_matrix, dup
 from src.simulation.noise import add_polar_noise_to_measurement
 from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
-from src.simulation.load_profile import generate_gaussian_load
-from src.simulation.network import add_load_power_control, make_y_bus
-from src.simulation.simulation import run_simulation, get_current_and_voltage
-from src.simulation.net_templates import NetData, bolognani_bus21, bolognani_net21, bolognani_bus56, bolognani_net56, \
+from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
+from src.simulation.simulation import SimulatedNet
+from src.simulation.net_templates import bolognani_bus21, bolognani_net21, bolognani_bus56, bolognani_net56, \
                                          bolognani_bus33, bolognani_net33, cigre_mv_feeder1_bus, cigre_mv_feeder1_net
 from src.identification.error_metrics import error_metrics, fro_error, rrms_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
@@ -78,7 +77,7 @@ net_data = bolognani_net56
 # PCC cannot be reduced, else all the loads would need to be constant
 observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
                   32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
-#observed_nodes = list(range(1, 57))
+observed_nodes = list(range(1, 57))
 hidden_nodes = list(set(range(56)) - set(np.array(observed_nodes)-1))
 
 constant_power_hidden_nodes = False
@@ -106,16 +105,16 @@ for l in net_data:
 
 # %%
 
-net = NetData(bus_data, net_data)
+net = SimulatedNet(bus_data, net_data)
 nodes = len(bus_data)
 
 selected_weeks = np.array([12])
 days = len(selected_weeks)*30
 steps = 15000 # 500
 load_cv = 0.0
-current_magnitude_sd = 1e-4
-voltage_magnitude_sd = 1e-4
-phase_sd = 1e-4#0.01*np.pi/180
+current_magnitude_sd = 1e-5
+voltage_magnitude_sd = 1e-5
+phase_sd = 1e-5#0.01*np.pi/180
 fmeas = 100 # [Hz] # 50
 
 max_plot_y = 18000
@@ -125,9 +124,9 @@ np.random.seed(11)
 
 # %%
 
-redo_loads = False
-redo_netsim = False
-redo_noise = False
+redo_loads = True
+redo_netsim = True
+redo_noise = True
 redo_standard_methods = True
 redo_STLS = True
 max_iterations = 50
@@ -158,46 +157,22 @@ pmu_ratings[-1] = np.sum(pmu_ratings) # injection from the grid
 # %%
 
 if redo_loads:
-    print("Reading standard profiles...")
-    pload_profile = None
-    qload_profile = None
-    for d in tqdm(selected_weeks*7):
-        pl = pd.read_csv(DATA_DIR / str("profiles/" + P_PROFILE), sep=';', header=None, engine='python',
-                           skiprows=d*24*60, skipfooter=round(365*24*60 - (d+days/len(selected_weeks))*24*60)).to_numpy()
-        pload_profile = pl if pload_profile is None else np.vstack((pload_profile, pl))
-
-    for d in tqdm(selected_weeks*7):
-        ql = pd.read_csv(DATA_DIR / str("profiles/Reactive_" + P_PROFILE), sep=';', header=None, engine='python',
-                           skiprows=d*24*60, skipfooter=round(365*24*60 - (d+days/len(selected_weeks))*24*60)).to_numpy()
-        qload_profile = ql if qload_profile is None else np.vstack((qload_profile, ql))
-
-    pload_profile = pload_profile/1e6 # [MW]
-    qload_profile = qload_profile/1e6 # [MVA]
-    p_mean_percentile = np.mean(np.percentile(np.abs(pload_profile), 90, axis=0))
-    q_mean_percentile = np.mean(np.percentile(np.abs(qload_profile), 90, axis=0))
-
     times = np.array(range(days*24*60))*60 #[s]
-    print("Done!")
 
-    print("Nodes percentiles are (P,Q respectively)")
-    print(p_mean_percentile)
-    print(q_mean_percentile)
+    print("Reading standard profiles...")
 
-    print("Assigning random households to nodes...")
-    load_p = np.tile(net.load.p_mw, (pload_profile.shape[0], 1))
-    load_q = np.tile(net.load.q_mvar, (pload_profile.shape[0], 1))
-    for i in tqdm(range(len(net.load.p_mw))):
-        if net.load.bus[net.load.p_mw.index[i]] in hidden_nodes and constant_power_hidden_nodes:
-            print("node " + str(net.load.bus[net.load.p_mw.index[i]]) + " with load # " + str(i) + " is hidden")
-            continue
-        load_p[:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
-                                                                 size=round(net.load.p_mw[net.load.p_mw.index[i]]
-                                                                            / p_mean_percentile))], axis=1)
-        load_q[:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
-                                                                 size=round(net.load.q_mvar[net.load.q_mvar.index[i]]
-                                                                            / q_mean_percentile))], axis=1)
-    print("Done!")
-
+    #load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
+    load_p, load_q = load_profile_from_csv(active_file=DATA_DIR / str("profiles/" + P_PROFILE),
+                                           reactive_file=DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
+                                           skip_header=selected_weeks*7*24*60,
+                                           skip_footer=np.array(365*24*60 - selected_weeks*7*24*60
+                                                              - days/len(selected_weeks)*24*60, dtype=np.int64),
+                                           load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
+                                                                      for i in range(len(net.load.p_mw))]),
+                                           load_q_reference = np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
+                                                                        for i in range(len(net.load.q_mvar))]),
+                                           load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None, verbose=True
+                                           )
 
     print("Saving loads...")
     sim_PQ = {'p': load_p, 'q': load_q, 't': times}
@@ -225,21 +200,9 @@ print("Done!")
 # %%
 
 if redo_netsim:
-    # for cubic interpolation, we need to do it on the loads, but it's very slow !
-    # print("Interpolating missing loads...")
-    # f = interp1d(load_profile['t'].squeeze(), load_p, axis=0, type="cubic")
-    # load_p = f(ts)
-    # f = interp1d(load_profile['t'].squeeze(), load_q, axis=0, type="cubic")
-    # load_q = f(ts)
-    # print("Done!")
-
     print("Simulating network...")
-    #load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
-    controlled_net = add_load_power_control(net, load_p, load_q)
-    sim_result = run_simulation(controlled_net, verbose=True)
-    y_bus = make_y_bus(controlled_net)
-    voltage, current = get_current_and_voltage(sim_result, y_bus)
-    current = np.array(voltage @ y_bus)
+    y_bus = net.make_y_bus()
+    voltage, current = net.run(load_p, load_q).get_current_and_voltage()
     print("Done!")
 
     print("Saving data...")
@@ -347,36 +310,25 @@ print("Done!")
 # %%
 
 print("Kron and sub-Kron reducing hidden nodes, PCC, and loads with no current...")
-idx_todel = []
-idx_tored = []
+passive_idx = [net.bus.index.tolist().index(idx) for idx in net.give_passive_nodes()[0]]
+hidden_idx = [net.bus.index.tolist().index(idx) for idx in hidden_nodes]
+pcc_idx = [net.bus.index.tolist().index(idx) for idx in net.ext_grid.bus.values]
+idx_todel = list(set(hidden_idx).union(passive_idx))
+hidden_idx = [idx for idx in hidden_idx if idx not in pcc_idx]
+
+# subKron reducing the ext_grid
+if not use_laplacian:
+    y_bus = np.delete(np.delete(y_bus, pcc_idx, axis=1), pcc_idx, axis=0)
+
+# Kron reduction of passive and hidden nodes
 shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
-for i in range(nodes):
-    idx = net.load.bus[net.load.bus == i].index.values[0]
-    if ( np.sqrt(net.load.p_mw[idx]*net.load.p_mw[idx] + net.load.q_mvar[idx]*net.load.q_mvar[idx]) == 0
-         and i not in net.ext_grid.bus.values) or idx in hidden_nodes:
-
-        # Kron reducing for normal node, subKron reduction for ext_grid connection
-        if i not in net.ext_grid.bus.values:
-            idx_tored.append(i)
-        idx_todel.append(i)
-
-        shunts[idx] = np.divide(np.mean(current[:, idx], axis=0),
-                                np.mean(voltage[:, idx], axis=0))
-
-# Kron reduction
-y_new = y_bus.copy() + np.diag(shunts)
-for i in idx_tored:
-    for j in range(nodes):
-        for k in range(nodes):
-            if j is not i and k is not i:
-                y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
-
-power = np.delete(voltage * current.conj(), idx_todel, axis=1)
+shunts[hidden_idx] = np.divide(np.mean(current[:, hidden_idx], axis=0), np.mean(voltage[:, hidden_idx], axis=0))
+y_bus = net.kron_reduction(list(set(hidden_idx).union(passive_idx).difference(pcc_idx)),
+                           y_bus + np.diag(shunts))
 
 if use_laplacian:
     noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
 else:
-    power = power - np.tile(np.mean(power, axis=0), (power.shape[0], 1))
     voltage = voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
     current = current - np.tile(np.mean(current, axis=0), (current.shape[0], 1))
     noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
@@ -387,7 +339,6 @@ noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
 noisy_current = np.delete(noisy_current, idx_todel, axis=1)
 voltage = np.delete(voltage, idx_todel, axis=1)
 current = np.delete(current, idx_todel, axis=1)
-y_bus = np.delete(np.delete(y_new, idx_todel, axis=1), idx_todel, axis=0)
 pmu_ratings = np.delete(pmu_ratings, idx_todel)
 newnodes = nodes - len(idx_todel)
 print("Done!")
@@ -562,7 +513,7 @@ tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*v
 # Create constraint on the diagonal
 lambdaprime = 200
 contrast_each_row = True
-contrast_diag = True
+contrast_diag = False
 
 if contrast_each_row:
     if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:  # TODO: understand this

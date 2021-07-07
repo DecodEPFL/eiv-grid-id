@@ -39,11 +39,9 @@ from src.models.matrix_operations import make_real_vector, vectorize_matrix, dup
 from src.simulation.noise import add_polar_noise_to_measurement
 from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
-from src.simulation.load_profile import generate_gaussian_load
-from src.simulation.network import add_load_power_control, make_y_bus, make_y_bus_3ph
-from src.simulation.simulation import run_simulation, get_current_and_voltage, run_simulation_3ph
-from src.simulation.net_templates import NetData3P, test_3phase_bus, test_3phase_net, bolognani_bus56, bolognani_net56, \
-                                         bolognani_bus33, bolognani_net33, cigre_mv_feeder3_bus, cigre_mv_feeder3_net, ieee123_types
+from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
+from src.simulation.simulation_3ph import SimulatedNet3P
+from src.simulation.net_templates_3ph import cigre_mv_feeder3_bus, cigre_mv_feeder3_net, ieee123_types
 from src.identification.error_metrics import error_metrics, fro_error, rrms_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
 from conf.conf import DATA_DIR
@@ -83,12 +81,14 @@ for l in net_data:
 bus_data = cigre_mv_feeder3_bus
 net_data = cigre_mv_feeder3_net
 
+use_laplacian = True
+
 # %%
 
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 500)
 
-net = NetData3P(ieee123_types, bus_data, net_data)
+net = SimulatedNet3P(ieee123_types, bus_data, net_data)
 nodes = len(bus_data)
 
 selected_weeks = np.array([12])
@@ -101,7 +101,7 @@ phase_sd = 1e-4#0.01*np.pi/180
 fmeas = 100 # [Hz] # 50
 
 max_plot_y = 3000#18000
-max_plot_err = 500
+max_plot_err = 500#5000
 
 np.random.seed(11)
 
@@ -109,7 +109,7 @@ np.random.seed(11)
 
 redo_loads = False
 redo_netsim = False
-redo_noise = False
+redo_noise = True
 redo_standard_methods = True
 redo_STLS = False
 max_iterations = 0
@@ -140,70 +140,49 @@ pmu_ratings = pmu_ratings.reshape((3*nodes,))
 # %%
 
 if redo_loads:
+    times = np.array(range(days * 24 * 60)) * 60  # [s]
+
     print("Reading standard profiles...")
-    pload_profile = None
-    qload_profile = None
-    for d in tqdm(selected_weeks*7):
-        pl = pd.read_csv(DATA_DIR / str("profiles/" + P_PROFILE), sep=';', header=None, engine='python',
-                           skiprows=d*24*60, skipfooter=round(365*24*60 - (d+days/len(selected_weeks))*24*60)).to_numpy()
-        pload_profile = pl if pload_profile is None else np.vstack((pload_profile, pl))
+    print("Symmetric loads")
+    load_p, load_q = load_profile_from_csv(active_file=DATA_DIR / str("profiles/" + P_PROFILE),
+                                           reactive_file=DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
+                                           skip_header=selected_weeks*7*24*60,
+                                           skip_footer=np.array(365*24*60 - selected_weeks*7*24*60
+                                                              - days/len(selected_weeks)*24*60, dtype=np.int64),
+                                           load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
+                                                                      for i in range(len(net.load.p_mw))]),
+                                           load_q_reference = np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
+                                                                        for i in range(len(net.load.q_mvar))]),
+                                           load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None, verbose=True
+                                           )
 
-    for d in tqdm(selected_weeks*7):
-        ql = pd.read_csv(DATA_DIR / str("profiles/Reactive_" + P_PROFILE), sep=';', header=None, engine='python',
-                           skiprows=d*24*60, skipfooter=round(365*24*60 - (d+days/len(selected_weeks))*24*60)).to_numpy()
-        qload_profile = ql if qload_profile is None else np.vstack((qload_profile, ql))
-
-    pload_profile = pload_profile/1e6 # [MW]
-    qload_profile = qload_profile/1e6 # [MVA]
-    p_mean_percentile = np.mean(np.percentile(np.abs(pload_profile), 90, axis=0))
-    q_mean_percentile = np.mean(np.percentile(np.abs(qload_profile), 90, axis=0))
-
-    times = np.array(range(days*24*60))*60 #[s]
+    print("Asymmetric loads")
+    load_asym = load_profile_from_csv(active_file=DATA_DIR / str("profiles/" + P_PROFILE),
+                                      reactive_file=DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
+                                      skip_header=selected_weeks*7*24*60,
+                                      skip_footer=np.array(365*24*60 - selected_weeks*7*24*60
+                                                         - days/len(selected_weeks)*24*60, dtype=np.int64),
+                                      load_p_reference=np.array(
+                                          [net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
+                                           for i in range(len(net.asymmetric_load.p_a_mw))]),
+                                      load_q_reference = np.array(
+                                          [net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
+                                           for i in range(len(net.asymmetric_load.q_a_mvar))]),
+                                      load_p_rb = np.array(
+                                          [net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
+                                           for i in range(len(net.asymmetric_load.p_b_mw))]),
+                                      load_q_rb = np.array(
+                                          [net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
+                                           for i in range(len(net.asymmetric_load.q_b_mvar))]),
+                                      load_p_rc = np.array(
+                                          [net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
+                                           for i in range(len(net.asymmetric_load.p_c_mw))]),
+                                      load_q_rc = np.array(
+                                          [net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
+                                           for i in range(len(net.asymmetric_load.q_c_mvar))]),
+                                      verbose = True
+                                      )
     print("Done!")
-
-    print("Nodes percentiles are (P,Q respectively)")
-    print(p_mean_percentile)
-    print(q_mean_percentile)
-
-    print("Assigning random households to nodes...")
-    load_p = np.zeros((pload_profile.shape[0], len(net.load.p_mw)))
-    load_q = np.zeros((qload_profile.shape[0], len(net.load.q_mvar)))
-    load_asym = [np.zeros((pload_profile.shape[0], len(net.asymmetric_load.p_a_mw))),
-                 np.zeros((pload_profile.shape[0], len(net.asymmetric_load.p_b_mw))),
-                 np.zeros((pload_profile.shape[0], len(net.asymmetric_load.p_c_mw))),
-                 np.zeros((qload_profile.shape[0], len(net.asymmetric_load.q_a_mvar))),
-                 np.zeros((qload_profile.shape[0], len(net.asymmetric_load.q_b_mvar))),
-                 np.zeros((qload_profile.shape[0], len(net.asymmetric_load.q_c_mvar))),
-    ]
-    for i in tqdm(range(len(net.load.p_mw))):
-        load_p[:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
-                                                                 size=round(net.load.p_mw[net.load.p_mw.index[i]]
-                                                                            / p_mean_percentile))], axis=1)
-        load_q[:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
-                                                                 size=round(net.load.q_mvar[net.load.q_mvar.index[i]]
-                                                                            / q_mean_percentile))], axis=1)
-    for i in tqdm(range(len(net.asymmetric_load.p_a_mw))):
-        load_asym[0][:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
-                                    size=round(net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
-                                                                            / p_mean_percentile))], axis=1)
-        load_asym[1][:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
-                                    size=round(net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
-                                                                            / p_mean_percentile))], axis=1)
-        load_asym[2][:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
-                                    size=round(net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
-                                                                            / p_mean_percentile))], axis=1)
-
-        load_asym[3][:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
-                                    size=round(net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
-                                                                            / q_mean_percentile))], axis=1)
-        load_asym[4][:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
-                                    size=round(net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
-                                                                            / q_mean_percentile))], axis=1)
-        load_asym[5][:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
-                                    size=round(net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
-                                                                            / q_mean_percentile))], axis=1)
-    print("Done!")
-
 
     print("Saving loads...")
     sim_PQ = {'p': load_p, 'q': load_q, 'a': load_asym, 't': times}
@@ -217,11 +196,14 @@ load_q = sim_PQ["q"]
 load_asym = sim_PQ["a"]
 times = sim_PQ["t"]
 print("Done!")
+
+# %%
+
 #plot_series(load_p[180:60*24+180, np.r_[0:6, 7:11]], 'loads', s=1, ar=2000,
 #            colormap=['grey', 'grey', 'grey', 'black', 'grey', 'grey', 'grey', 'grey', 'grey', 'grey'])
-#plot_series(load_p[180:60*24+180, :], 'loads', s=1, ar=500,
-#            colormap=['grey', 'grey', 'grey', 'grey', 'grey',
-#                      'grey', 'grey', 'grey', 'black', 'grey'])
+plot_series(load_p[180:60*24+180, :], 'loads', s=1, ar=500,
+           colormap=['grey', 'grey', 'grey', 'grey', 'grey',
+                     'grey', 'grey', 'grey', 'black', 'grey'])
 
 # %% md
 
@@ -232,19 +214,9 @@ print("Done!")
 # %%
 
 if redo_netsim:
-    # for cubic interpolation, we need to do it on the loads, but it's very slow !
-    # print("Interpolating missing loads...")
-    # f = interp1d(load_profile['t'].squeeze(), load_p, axis=0, type="cubic")
-    # load_p = f(ts)
-    # f = interp1d(load_profile['t'].squeeze(), load_q, axis=0, type="cubic")
-    # load_q = f(ts)
-    # print("Done!")
-
     print("Simulating network...")
-    controlled_net = add_load_power_control(net, load_p, load_q, load_asym)
-    sim_result = run_simulation_3ph(controlled_net, verbose=True)
-    y_bus = make_y_bus_3ph(controlled_net)
-    voltage, current = get_current_and_voltage(sim_result, y_bus)
+    y_bus = net.make_y_bus()
+    voltage, current = net.run(load_p, load_q, load_asym).get_current_and_voltage()
     print("Done!")
 
     print("Saving data...")
@@ -263,12 +235,6 @@ times = sim_IV["t"]
 ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
 fparam = int(np.floor(ts.size/steps))
 print("Done!")
-
-
-# TODO: remove this
-plot_heatmap(np.abs(y_bus), "y_bus_full")
-voltmp = voltage
-curtmp = current
 
 # %% md
 
@@ -354,66 +320,42 @@ print("Done!")
 """
 # %%
 
-# TODO: start again from here
-
 print("Kron reducing loads with no current...")
+
 idx_todel = []
-y_new = y_bus.copy()
-for idx in net.bus.index:
-    # subKron reducing the ext_grid
-    if idx in net.ext_grid.bus.values:
-        i_entry = net.bus.index.tolist().index(idx)
+# subKron reducing the ext_grid
+for idx in net.ext_grid.bus.values:
+    i = 3*net.bus.index.tolist().index(idx)
+    idx_todel.extend([i, i+1, i+2])
+    y_bus = np.delete(np.delete(y_bus, [i, i+1, i+2], axis=1), [i, i+1, i+2], axis=0)
 
-        for ph in range(3):
-            i = 3 * i_entry + ph
-            idx_todel.append(i)
+passive_nodes = net.give_passive_nodes()
+idx_tored = []
+for ph in range(3):
+    for idx in passive_nodes[ph]:
+        idx_tored.append(3*net.bus.index.tolist().index(idx) + ph)
 
-    # Kron reducing passive nodes
-    else:
-        remove_i = (True, True, True)
+y_bus = net.kron_reduction(idx_tored, y_bus)
+idx_todel.extend(idx_tored)
 
-        if idx in net.load.bus:
-            remove_i = remove_i if net.load.p_mw[net.load.bus[net.load.bus == idx].index.values[0]] == 0 \
-                and net.load.q_mvar[net.load.bus[net.load.bus == idx].index.values[0]] == 0 else (False, False, False)
+print("Removing nodes: ", idx_todel)
 
-        if idx in net.asymmetric_load.bus:
-            idxload = net.asymmetric_load.bus[net.asymmetric_load.bus == idx].index.values[0]
-            remove_i = remove_i[0] if \
-                net.asymmetric_load.p_a_mw[idxload] == 0 and net.asymmetric_load.q_a_mvar[idxload] == 0 \
-                else False, remove_i[1] if \
-                net.asymmetric_load.p_b_mw[idxload] == 0 and net.asymmetric_load.q_b_mvar[idxload] == 0 \
-                else False, remove_i[2] if \
-                net.asymmetric_load.p_c_mw[idxload] == 0 and net.asymmetric_load.q_c_mvar[idxload] == 0 \
-                else False
-
-        i_entry = net.bus.index.tolist().index(idx)
-        for ph in range(3):
-            if remove_i[ph]:
-                i = 3*i_entry + ph
-                idx_todel.append(i)
-                for j in range(3*nodes):
-                    for k in range(3*nodes):
-                        if j is not i and k is not i:
-                            y_new[j, k] = y_new[j, k] - y_new[j, i]*y_new[i, k]/y_new[i, i]
-
-
-
+# Centering data
 voltage = voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
 current = current - np.tile(np.mean(current, axis=0), (current.shape[0], 1))
 noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
 noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
 
-print(idx_todel)
+# Removing nodes
 noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
 noisy_current = np.delete(noisy_current, idx_todel, axis=1)
 voltage = np.delete(voltage, idx_todel, axis=1)
 current = np.delete(current, idx_todel, axis=1)
-y_bus = np.delete(np.delete(y_new, idx_todel, axis=1), idx_todel, axis=0)
 pmu_ratings = np.delete(pmu_ratings, idx_todel)
 newnodes = 3*nodes - len(idx_todel)
-DT = duplication_matrix(newnodes) @ transformation_matrix(newnodes)
-E = elimination_lap_matrix(newnodes) @ elimination_sym_matrix(newnodes)
 print("Done!")
+
+# %%
 
 q, r = np.linalg.qr(voltage)
 stcplt = pd.Series(np.log10(np.abs(np.diag(r)[1:]/r[0, 0])).tolist())
@@ -422,7 +364,15 @@ plot_series(np.expand_dims(stcplt.to_numpy(), axis=1), 'correlations', s=3, colo
 # %%
 
 plot_heatmap(np.abs(y_bus), "y_bus", minval=0, maxval=max_plot_y)
+
 # %%
+
+if use_laplacian:
+    DT = duplication_matrix(newnodes) @ transformation_matrix(newnodes)
+    E = elimination_lap_matrix(newnodes) @ elimination_sym_matrix(newnodes)
+else:
+    DT = duplication_matrix(newnodes)
+    E = elimination_sym_matrix(newnodes)
 
 if redo_standard_methods:
 

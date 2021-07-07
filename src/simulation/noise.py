@@ -6,6 +6,7 @@ import numpy as np
     Functions to add noise to measurements both
         - in cartesian coordinates as independent real and imaginary part
         - in polar coordinates as independent phase and magnitude
+    Functions to filter and subsample measurements
 
     Copyright @donelef, @jbrouill on GitHub
 """
