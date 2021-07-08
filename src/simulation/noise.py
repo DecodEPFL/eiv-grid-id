@@ -1,6 +1,8 @@
 from typing import Tuple
 
 import numpy as np
+from tqdm import tqdm
+from scipy.interpolate import interp1d
 
 """
     Functions to add noise to measurements both
@@ -22,24 +24,26 @@ def add_noise_in_cartesian_coordinates(current: np.array, voltage: np.array, cur
     :param voltage_accuracy: standard deviation of noise on voltages
     :return: tuple of two T-by-n matrices of noisy voltages and currents respectively
     """
-    noisy_voltage, _, _ = add_cartesian_noise_to_measurement(voltage, voltage_accuracy)
-    noisy_current, _, _ = add_cartesian_noise_to_measurement(current, current_accuracy)
+    noisy_voltage, _, _ = add_cartesian_noise_to_measurement(voltage, voltage_accuracy, voltage_accuracy)
+    noisy_current, _, _ = add_cartesian_noise_to_measurement(current, current_accuracy, current_accuracy)
     return noisy_voltage, noisy_current
 
 
-def add_cartesian_noise_to_measurement(actual: np.array, accuracy: float) -> Tuple[np.array, np.array, np.array]:
+def add_cartesian_noise_to_measurement(actual: np.array, real_accuracy: float, imag_accuracy: float)\
+        -> Tuple[np.array, np.array, np.array]:
     """
     Adds measurement noise in cartesian coordinates to a data matrix.
     The standard deviation is in percents, so it is scaled with
     the mean absolute value of the actual variables.
 
     :param actual: T-by-n matrix of actual variables
-    :param accuracy: standard deviation of noise in percents
+    :param real_accuracy: standard deviation of real noise in percents
+    :param imag_accuracy: standard deviation of imaginary noise in percents
     :return: T-by-n matrix of noisy measurements, absolute standard deviation for real, and imaginary part
     """
     # Compute absolute standard deviation
-    real_sd = np.mean(np.abs(np.real(actual)), axis=0) * accuracy / 3
-    imag_sd = np.mean(np.abs(np.imag(actual)), axis=0) * accuracy / 3
+    real_sd = np.mean(np.abs(np.real(actual)), axis=0) * real_accuracy / 3
+    imag_sd = np.mean(np.abs(np.imag(actual)), axis=0) * imag_accuracy / 3
 
     # Generate noise
     noise_real = np.random.normal(0, real_sd, actual.shape)
@@ -96,3 +100,35 @@ def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: n
     noisy_measurement = noisy_magnitude * np.exp(1j * noisy_phase)
     return noisy_measurement
 
+def filter_and_resample_measurement(actual_measurement, oldtimes=None, newtimes=None, fparam=1,
+                                    std_m=None, std_p=None, noise_fcn=None, verbose=False):
+    """
+    Adds measurement noise given by noise_fcn (no noise if None)
+    The vector is linearly extrapolated to newtimes and then filtered by fparam
+
+    :param actual_measurement: T-by-n matrix of actual variables
+    :param magnitude_sd: standard deviation of noise on magnitude
+    :param phase_sd: standard deviation of noise on phase
+    :return:
+    """
+
+    pbar = tqdm if verbose else (lambda x: x)
+    steps, n_series = int(len(newtimes)/fparam), actual_measurement.shape[1]
+    oldtimes, newtimes = np.arange(steps) if oldtimes is None else oldtimes, oldtimes if newtimes is None else newtimes
+
+    # linear interpolation of missing timesteps, looped to reduce memory usage
+    filtered = 1j*np.zeros((steps, n_series))
+
+    for i in pbar(range(n_series)):
+        add_noise = lambda x: x
+        if noise_fcn is not None and std_m is not None and std_p is not None:
+            add_noise = lambda x: noise_fcn(x, std_m[i] if hasattr(std_m, '__iter__') else std_m,
+                                            std_p[i] if hasattr(std_p, '__iter__') else std_p)
+
+        f = interp1d(oldtimes, actual_measurement[:, i], axis=0)
+        resampled = add_noise(f(newtimes))
+
+        for t in range(steps):
+            filtered[t, i] = np.sum(resampled[t*fparam:(t+1)*fparam]).copy()/fparam
+
+    return filtered

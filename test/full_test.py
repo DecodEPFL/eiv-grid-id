@@ -36,7 +36,7 @@ sys.path.insert(1, '..')
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, transformation_matrix, \
                                          make_complex_vector, unvectorize_matrix, elimination_sym_matrix,\
                                          elimination_lap_matrix, undelete
-from src.simulation.noise import add_polar_noise_to_measurement
+from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
 from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
 from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
@@ -77,7 +77,7 @@ net_data = bolognani_net56
 # PCC cannot be reduced, else all the loads would need to be constant
 observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
                   32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
-observed_nodes = list(range(1, 57))
+#observed_nodes = list(range(1, 57))
 hidden_nodes = list(set(range(56)) - set(np.array(observed_nodes)-1))
 
 constant_power_hidden_nodes = False
@@ -112,9 +112,9 @@ selected_weeks = np.array([12])
 days = len(selected_weeks)*30
 steps = 15000 # 500
 load_cv = 0.0
-current_magnitude_sd = 1e-5
-voltage_magnitude_sd = 1e-5
-phase_sd = 1e-5#0.01*np.pi/180
+current_magnitude_sd = 1e-4
+voltage_magnitude_sd = 1e-4
+phase_sd = 1e-4#0.01*np.pi/180
 fmeas = 100 # [Hz] # 50
 
 max_plot_y = 18000
@@ -124,8 +124,8 @@ np.random.seed(11)
 
 # %%
 
-redo_loads = True
-redo_netsim = True
+redo_loads = False
+redo_netsim = False
 redo_noise = True
 redo_standard_methods = True
 redo_STLS = True
@@ -181,10 +181,11 @@ if redo_loads:
 
 print("Loading loads...")
 sim_PQ = np.load(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"))
-load_p = sim_PQ["p"]
-load_q = sim_PQ["q"]
-times = sim_PQ["t"]
+load_p, load_q, times = sim_PQ["p"], sim_PQ["q"], sim_PQ["t"]
 print("Done!")
+
+# %% md
+
 #plot_series(load_p[180:60*24+180, np.r_[0:6, 7:11]], 'loads', s=1, ar=2000,
 #            colormap=['grey', 'grey', 'grey', 'black', 'grey', 'grey', 'grey', 'grey', 'grey', 'grey'])
 #plot_series(load_p[180:60*24+180, :], 'loads', s=1, ar=500,
@@ -214,12 +215,7 @@ if redo_netsim:
 
 print("Loading data...")
 sim_IV = np.load(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"))
-voltage = sim_IV["v"]
-current = sim_IV["i"]
-y_bus = sim_IV["y"]
-times = sim_IV["t"]
-ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
-fparam = int(np.floor(ts.size/steps))
+voltage, current, y_bus, times = sim_IV["v"], sim_IV["i"], sim_IV["y"], sim_IV["t"]
 print("Done!")
 
 # %% md
@@ -238,42 +234,22 @@ print("Done!")
 """
 # %%
 
+ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
+fparam = int(np.floor(ts.size/steps))
 if redo_noise:
     print("Adding noise and filtering...")
-    # linear interpolation of missing timesteps, looped to reduce memory usage
-    tmp_voltage = 1j*np.zeros((steps, nodes))
-    tmp_current = 1j*np.zeros((steps, nodes))
 
-    for i in tqdm(range(nodes)):
-        f = interp1d(times.squeeze(), voltage[:, i], axis=0)
-        noisy_voltage = add_polar_noise_to_measurement(f(ts), voltage_magnitude_sd, phase_sd)
-        f = interp1d(times.squeeze(), current[:, i], axis=0)
-        noisy_current = add_polar_noise_to_measurement(f(ts), current_magnitude_sd * pmu_ratings[i], phase_sd)
-        for t in range(steps):
-            tmp_voltage[t, i] = np.sum(noisy_voltage[t*fparam:(t+1)*fparam]).copy()/fparam
-            tmp_current[t, i] = np.sum(noisy_current[t*fparam:(t+1)*fparam]).copy()/fparam
+    noisy_voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                                    std_m=voltage_magnitude_sd, std_p=phase_sd,
+                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
+    noisy_current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                                    std_m=current_magnitude_sd * pmu_ratings, std_p=phase_sd,
+                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
 
-    noisy_voltage = tmp_voltage
-    noisy_current = tmp_current
-    print("Done!")
-
-
-    print("Resampling data...")
-    # linear interpolation of missing timesteps, looped to reduce memory usage
-    tmp_voltage = 1j*np.zeros((steps, nodes))
-    tmp_current = 1j*np.zeros((steps, nodes))
-
-    for i in tqdm(range(nodes)):
-        f = interp1d(times.squeeze(), voltage[:, i], axis=0)
-        voltage_i = f(ts)
-        f = interp1d(times.squeeze(), current[:, i], axis=0)
-        current_i = f(ts)
-        for t in range(steps):
-            tmp_voltage[t, i] = np.sum(voltage_i[t*fparam:(t+1)*fparam]).copy()/fparam
-            tmp_current[t, i] = np.sum(current_i[t*fparam:(t+1)*fparam]).copy()/fparam
-
-    voltage = tmp_voltage
-    current = tmp_current
+    voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
+    current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
     print("Done!")
 
     print("Saving filtered data...")
@@ -283,18 +259,8 @@ if redo_noise:
 
 print("Loading filtered data...")
 sim_IV = np.load(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"))
-noisy_voltage = sim_IV["v"]
-noisy_current = sim_IV["i"]
-voltage = sim_IV["w"]
-current = sim_IV["j"]
-y_bus = sim_IV["y"]
-voltage_magnitude_sd = voltage_magnitude_sd/np.sqrt(fparam)
-current_magnitude_sd = current_magnitude_sd/np.sqrt(fparam)
-phase_sd = phase_sd/np.sqrt(fparam)
+noisy_voltage, noisy_current, voltage, current, y_bus = sim_IV["v"], sim_IV["i"], sim_IV["w"], sim_IV["j"], sim_IV["y"]
 print("Done!")
-
-#current = current.conj() * voltage
-#noisy_current = noisy_current.conj() * voltage
 
 # %% md
 
@@ -325,7 +291,11 @@ shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
 shunts[hidden_idx] = np.divide(np.mean(current[:, hidden_idx], axis=0), np.mean(voltage[:, hidden_idx], axis=0))
 y_bus = net.kron_reduction(list(set(hidden_idx).union(passive_idx).difference(pcc_idx)),
                            y_bus + np.diag(shunts))
+print("Done!")
+print("reduced nodes: " + str(np.array(idx_todel)+1))
 
+print("Centering and reducing the data and updating variance params...")
+# Centering data
 if use_laplacian:
     noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
 else:
@@ -334,14 +304,21 @@ else:
     noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
     noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
 
-print("reduced nodes: " + str(np.array(idx_todel)+1))
+# Updating variance
+voltage_magnitude_sd = voltage_magnitude_sd/np.sqrt(fparam)
+current_magnitude_sd = current_magnitude_sd/np.sqrt(fparam)
+phase_sd = phase_sd/np.sqrt(fparam)
+
+# Removing reduced nodes
+newnodes = nodes - len(idx_todel)
 noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
 noisy_current = np.delete(noisy_current, idx_todel, axis=1)
 voltage = np.delete(voltage, idx_todel, axis=1)
 current = np.delete(current, idx_todel, axis=1)
 pmu_ratings = np.delete(pmu_ratings, idx_todel)
-newnodes = nodes - len(idx_todel)
 print("Done!")
+
+# %%
 
 q, r = np.linalg.qr(voltage)
 stcplt = pd.Series(np.log10(np.abs(np.diag(r)[1:]/r[0, 0])).tolist())
@@ -652,8 +629,8 @@ for i in range(tls_weights_sum.shape[0]):
 
 abs_tol = 1e-10*1e1
 rel_tol = 1e-10*10e-3
-lam = 2e13#4e10#8e7
-#lam = 4e11#4e10#8e7
+#lam = 2e13#4e10#8e7
+lam = 4e11#4e10#8e7
 if use_laplacian:
     sparse_tls_cov = SparseTotalLeastSquare(lambda_value=lam, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations)
 else:

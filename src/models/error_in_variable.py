@@ -357,7 +357,7 @@ class SparseTotalLeastSquare(GridIdentificationModel, MisfitWeightedModel):
                           y_mat: np.array, Ftls: np.array = None):
         # Initialization of parameters
         samples, n = x.shape
-        E = elimination_matrix(n)
+        E = sparse.csr_matrix(self._elimination_matrix(n))
 
         # Copy data
         if self.enforce_y_cons:

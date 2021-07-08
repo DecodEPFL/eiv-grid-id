@@ -4,21 +4,15 @@
 
 # %%
 
-import pandapower as pp
-import pandapower.networks as pnet
 import pandas as pd
 import numpy as np
 import scipy as sp
-import cvxpy as cp
 import seaborn as sns
 from tqdm import tqdm
 
 from scipy import sparse
-from scipy.io import loadmat
 from scipy.interpolate import interp1d
-from scipy.ndimage import convolve1d
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 
 # %%
 
@@ -36,7 +30,7 @@ sys.path.insert(1, '..')
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, transformation_matrix, \
                                          make_complex_vector, unvectorize_matrix, elimination_lap_matrix,\
                                          elimination_sym_matrix, undelete
-from src.simulation.noise import add_polar_noise_to_measurement
+from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
 from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
 from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
@@ -44,6 +38,7 @@ from src.simulation.simulation_3ph import SimulatedNet3P
 from src.simulation.net_templates_3ph import cigre_mv_feeder3_bus, cigre_mv_feeder3_net, ieee123_types
 from src.identification.error_metrics import error_metrics, fro_error, rrms_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
+from src.models.smooth_prior import SmoothPrior
 from conf.conf import DATA_DIR
 from src.models.utils import plot_heatmap, plot_scatter, plot_series
 
@@ -85,9 +80,6 @@ use_laplacian = True
 
 # %%
 
-pd.set_option('display.max_rows', 500)
-pd.set_option('display.max_columns', 500)
-
 net = SimulatedNet3P(ieee123_types, bus_data, net_data)
 nodes = len(bus_data)
 
@@ -107,8 +99,8 @@ np.random.seed(11)
 
 # %%
 
-redo_loads = False
-redo_netsim = False
+redo_loads = True
+redo_netsim = True
 redo_noise = True
 redo_standard_methods = True
 redo_STLS = False
@@ -191,10 +183,7 @@ if redo_loads:
 
 print("Loading loads...")
 sim_PQ = np.load(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"))
-load_p = sim_PQ["p"]
-load_q = sim_PQ["q"]
-load_asym = sim_PQ["a"]
-times = sim_PQ["t"]
+load_p, load_q, load_asym, times = sim_PQ["p"], sim_PQ["q"], sim_PQ["a"], sim_PQ["t"]
 print("Done!")
 
 # %%
@@ -228,12 +217,7 @@ if redo_netsim:
 
 print("Loading data...")
 sim_IV = np.load(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"))
-voltage = sim_IV["v"]
-current = sim_IV["i"]
-y_bus = sim_IV["y"]
-times = sim_IV["t"]
-ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
-fparam = int(np.floor(ts.size/steps))
+voltage, current, y_bus, times = sim_IV["v"], sim_IV["i"], sim_IV["y"], sim_IV["t"]
 print("Done!")
 
 # %% md
@@ -252,42 +236,22 @@ print("Done!")
 """
 # %%
 
+ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
+fparam = int(np.floor(ts.size/steps))
 if redo_noise:
     print("Adding noise and filtering...")
-    # linear interpolation of missing timesteps, looped to reduce memory usage
-    tmp_voltage = 1j*np.zeros((steps, 3*nodes))
-    tmp_current = 1j*np.zeros((steps, 3*nodes))
 
-    for i in tqdm(range(3*nodes)):
-        f = interp1d(times.squeeze(), voltage[:, i], axis=0)
-        noisy_voltage = add_polar_noise_to_measurement(f(ts), voltage_magnitude_sd, phase_sd)
-        f = interp1d(times.squeeze(), current[:, i], axis=0)
-        noisy_current = add_polar_noise_to_measurement(f(ts), current_magnitude_sd * pmu_ratings[i], phase_sd)
-        for t in range(steps):
-            tmp_voltage[t, i] = np.sum(noisy_voltage[t*fparam:(t+1)*fparam]).copy()/fparam
-            tmp_current[t, i] = np.sum(noisy_current[t*fparam:(t+1)*fparam]).copy()/fparam
+    noisy_voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                                    std_m=voltage_magnitude_sd, std_p=phase_sd,
+                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
+    noisy_current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                                    std_m=current_magnitude_sd * pmu_ratings, std_p=phase_sd,
+                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
 
-    noisy_voltage = tmp_voltage
-    noisy_current = tmp_current
-    print("Done!")
-
-
-    print("Resampling data...")
-    # linear interpolation of missing timesteps, looped to reduce memory usage
-    tmp_voltage = 1j*np.zeros((steps, 3*nodes))
-    tmp_current = 1j*np.zeros((steps, 3*nodes))
-
-    for i in tqdm(range(3*nodes)):
-        f = interp1d(times.squeeze(), voltage[:, i], axis=0)
-        voltage_i = f(ts)
-        f = interp1d(times.squeeze(), current[:, i], axis=0)
-        current_i = f(ts)
-        for t in range(steps):
-            tmp_voltage[t, i] = np.sum(voltage_i[t*fparam:(t+1)*fparam]).copy()/fparam
-            tmp_current[t, i] = np.sum(current_i[t*fparam:(t+1)*fparam]).copy()/fparam
-
-    voltage = tmp_voltage
-    current = tmp_current
+    voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
+    current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
     print("Done!")
 
     print("Saving filtered data...")
@@ -297,14 +261,7 @@ if redo_noise:
 
 print("Loading filtered data...")
 sim_IV = np.load(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"))
-noisy_voltage = sim_IV["v"]
-noisy_current = sim_IV["i"]
-voltage = sim_IV["w"]
-current = sim_IV["j"]
-y_bus = sim_IV["y"]
-voltage_magnitude_sd = voltage_magnitude_sd/np.sqrt(fparam)
-current_magnitude_sd = current_magnitude_sd/np.sqrt(fparam)
-phase_sd = phase_sd/np.sqrt(fparam)
+noisy_voltage, noisy_current, voltage, current, y_bus = sim_IV["v"], sim_IV["i"], sim_IV["w"], sim_IV["j"], sim_IV["y"]
 print("Done!")
 
 # %% md
@@ -338,21 +295,28 @@ for ph in range(3):
 y_bus = net.kron_reduction(idx_tored, y_bus)
 idx_todel.extend(idx_tored)
 
-print("Removing nodes: ", idx_todel)
+print("Done!")
+print("reduced elements: " + str(np.array(idx_todel)+0))
 
+print("Centering and reducing the data and updating variance params...")
 # Centering data
 voltage = voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
 current = current - np.tile(np.mean(current, axis=0), (current.shape[0], 1))
 noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
 noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
 
-# Removing nodes
+# Updating variance
+voltage_magnitude_sd = voltage_magnitude_sd/np.sqrt(fparam)
+current_magnitude_sd = current_magnitude_sd/np.sqrt(fparam)
+phase_sd = phase_sd/np.sqrt(fparam)
+
+# Removing reduced nodes
+newnodes = 3*nodes - len(idx_todel)
 noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
 noisy_current = np.delete(noisy_current, idx_todel, axis=1)
 voltage = np.delete(voltage, idx_todel, axis=1)
 current = np.delete(current, idx_todel, axis=1)
 pmu_ratings = np.delete(pmu_ratings, idx_todel)
-newnodes = 3*nodes - len(idx_todel)
 print("Done!")
 
 # %%
@@ -478,7 +442,7 @@ plot_heatmap(np.abs(y_lasso), "y_lasso", minval=0, maxval=max_plot_y)
 print("Done!")
 
 # %% md
-exit(0)
+
 # Bayesian priors definition
 """
 # Generate a prior tls_weights_all representing a chained network using the y_tls solution
@@ -497,33 +461,97 @@ exit(0)
 
 # Make tls solution symmetric
 y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
+y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
+
+
+
+prior = SmoothPrior(n=len(E @ vectorize_matrix(y_tls)))
+
+idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((newnodes, newnodes))
+                                                                    - np.eye(newnodes))) > 0)
+prior.add_adaptive_sparsity_prior(indices=idx_offdiag,
+                                  values=np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls)))[idx_offdiag])
+
+#idx_contrast = np.zeros((2*newnodes, ))
+
 
 # Create adaptive chain network prior
 tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls))), 1.0))
-tls_weights_chain = make_real_vector(E @ ((1+1j)*vectorize_matrix(3*np.diag(np.ones(newnodes)) -
-                                                                  np.tri(newnodes, newnodes, 1) +
-                                                                  np.tri(newnodes, newnodes, -2))))
-tls_weights_chain = np.ones(tls_weights_chain.shape) - tls_weights_chain
-tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_chain)
+tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*vectorize_matrix(np.eye(newnodes)))))
+
+
+
+exit(0)
 
 # Create constraint on the diagonal
-tls_weights_sum = np.zeros((newnodes*newnodes, int(newnodes*(newnodes-1))))
-for idx in range(newnodes-1):
-    # Indices of all entries in the same row
-    y_idx = np.vstack((np.zeros((idx+1, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 2, newnodes))))
-    y_idx = E @ vectorize_matrix(y_idx+y_idx.T)
+lambdaprime = 200
+contrast_each_row = True
+contrast_diag = False
 
-    # Add to the idx's element in first lower diagonal
-    tls_weights_sum[idx*(newnodes+1) + 1, :int(newnodes*(newnodes-1)/2)] = \
-        y_idx / np.abs(np.real(np.diag(y_sym_tls)[idx+1]))
-    tls_weights_sum[idx*(newnodes+1) + 1, int(newnodes*(newnodes-1)/2):] = \
-        y_idx / np.abs(np.imag(np.diag(y_sym_tls)[idx+1]))
+if contrast_each_row:
+    if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:  # TODO: understand this
+        diag_tls = np.diag(y_tls)
+    else:
+        diag_tls = -np.sum(y_sym_tls_ns, axis=1)
 
-tls_weights_sum = sparse.bmat([[E @ tls_weights_sum[:, :int(newnodes*(newnodes-1)/2)], None],
-                               [None, E @ tls_weights_sum[:, int(newnodes*(newnodes-1)/2):]]], format='csr')
-tls_weights_sum = np.diag(np.multiply(tls_weights_adaptive, tls_weights_chain)) + 200*np.abs(tls_weights_sum)
-tls_centers_sum = 200*make_real_vector(-E @ vectorize_matrix(np.diag(np.diag(np.sign(np.real(y_sym_tls)) +
-                                                                             1j*np.sign(np.imag(y_sym_tls)))[1:], -1)))
+    """
+    print("diagonal elements estimation")
+    print(np.divide(np.abs(np.real(diag_tls - bus_diag_L)), np.abs(np.real(bus_diag_L))) +
+          np.divide(np.abs(np.imag(diag_tls - bus_diag_L)), np.abs(np.imag(bus_diag_L))))
+
+    print(bus_diag_L)
+
+    print(np.sum(np.abs(np.real(bus_diag_L))) + np.sum(np.abs(np.imag(bus_diag_L))))
+    print(np.abs(np.sum(np.real(diag_tls - bus_diag_L))) + np.abs(np.sum(np.imag(diag_tls - bus_diag_L))))
+    """
+
+    tls_weights_sum = np.zeros((newnodes, tls_weights_adaptive.size))
+    for idx in range(newnodes):
+        # Indices of all entries in the same row
+        y_idx = np.vstack((np.zeros((idx, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 1, newnodes))))
+        y_idx = E @ vectorize_matrix(y_idx+y_idx.T - 2*np.diag(np.diag(y_idx)))
+
+        # Add to the idx's element in first lower diagonal
+        tls_weights_sum[idx, :y_idx.size] = \
+            y_idx / np.abs(np.real(diag_tls[idx])) * lambdaprime
+        tls_weights_sum[idx, y_idx.size:] = \
+            y_idx / np.abs(np.imag(diag_tls[idx])) * lambdaprime
+
+    tls_weights_sum = sparse.bmat([[np.diag(tls_weights_nondiag)],
+                                  [np.abs(sparse.bmat([[tls_weights_sum[:, :int(tls_weights_adaptive.size/2)], None],
+                                                       [None, tls_weights_sum[:, int(tls_weights_adaptive.size/2):]]],
+                                                       format='csr'))]], format='csr')
+
+    tls_centers_sum = np.concatenate((np.zeros((tls_weights_adaptive.size,)),
+                                      lambdaprime*make_real_vector((np.sign(np.real(diag_tls)) +
+                                                                   1j*np.sign(np.imag(diag_tls))))))
+    if not use_laplacian:
+        tls_centers_sum = -tls_centers_sum
+
+        if contrast_diag:
+            for idx in range(newnodes):
+                diag_tls_weight = np.diag(np.eye(newnodes)[:, idx]) \
+                                  * lambdaprime * (1/np.abs(np.diag(np.real(y_sym_tls))[idx])
+                                                   + 1j/np.abs(np.diag(np.imag(y_sym_tls))[idx]))
+                diag_weights = np.vstack([np.expand_dims(make_real_vector(E @ vectorize_matrix(np.real(diag_tls_weight))), axis=0),
+                                          np.expand_dims(make_real_vector(1j*E @ vectorize_matrix(np.imag(diag_tls_weight))), axis=0)])
+                tls_weights_sum = sparse.bmat([[tls_weights_sum], [sparse.csr_matrix(diag_weights)]], format='csr')
+
+                tls_centers_sum = np.concatenate((tls_centers_sum, lambdaprime *
+                                                  np.array([np.sign(np.diag(np.real(y_sym_tls))[idx]),
+                                                            np.sign(np.diag(np.imag(y_sym_tls))[idx])])))
+
+else:
+    total_l1 = np.sum(np.abs(np.real(y_sym_tls_ns)))/2 + 1j*np.sum(np.abs(np.imag(y_sym_tls_ns)))/2 \
+        - np.sum(np.abs(np.real(y_sym_tls_ns[np.real(y_sym_tls_ns) > 0]))) \
+        - 1j*np.sum(np.abs(np.imag(y_sym_tls_ns[np.imag(y_sym_tls_ns) < 0])))
+    sum_mat = np.abs(E @ vectorize_matrix(np.ones(y_sym_tls.shape) - np.eye(y_sym_tls.shape[0])))
+
+    tls_weights_sum = np.block([[np.diag(tls_weights_adaptive)],
+                                [make_real_vector(sum_mat)/np.real(total_l1)*lambdaprime],
+                                [make_real_vector(1j*sum_mat)/np.imag(total_l1)*lambdaprime]])
+    tls_centers_sum = np.concatenate((np.zeros(tls_weights_adaptive.shape), lambdaprime*np.array([1, -1])))
+
 
 """
 # Adding prior information from measurements

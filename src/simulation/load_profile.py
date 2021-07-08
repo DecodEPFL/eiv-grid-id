@@ -128,7 +128,7 @@ def load_profile_from_csv(
     q_mean_percentile = np.mean(np.percentile(np.abs(qload_profile), 90, axis=0))
     if verbose:
         print("90th percentiles for P and Q:")
-        print(p_mean_percentile, q_mean_percentile)
+        print(p_mean_percentile*1e6, " [W] ", q_mean_percentile*1e6, " [VAR]")
 
     if verbose:
         print("Assigning random households to nodes...")

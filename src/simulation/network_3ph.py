@@ -96,7 +96,6 @@ class NetData3P(Net):
         y_bus2 = run_net['_ppc2']['internal']['Ybus'].todense()
 
         y_012 = np.kron(y_bus0, np.diag([1, 0, 0])) + np.kron(y_bus1, np.diag([0, 1, 0])) \
-                + np.kron(y_bus1, np.diag([0, 0, 1]))
-        print(np.round(y_012))
+                + np.kron(y_bus1, np.diag([0, 0, 1]))  # TODO: check why not y_bus2
 
         return admittance_sequence_to_phase(y_012)
