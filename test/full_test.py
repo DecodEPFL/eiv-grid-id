@@ -38,13 +38,14 @@ from src.models.matrix_operations import make_real_vector, vectorize_matrix, dup
                                          elimination_lap_matrix, undelete
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
 from src.models.regression import ComplexRegression, BayesianRegression
-from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
+from src.models.error_in_variable import TotalLeastSquares, BayesianEIVRegression
 from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
 from src.simulation.simulation import SimulatedNet
 from src.simulation.net_templates import bolognani_bus21, bolognani_net21, bolognani_bus56, bolognani_net56, \
                                          bolognani_bus33, bolognani_net33, cigre_mv_feeder1_bus, cigre_mv_feeder1_net
 from src.identification.error_metrics import error_metrics, fro_error, rrms_error
 from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
+from src.models.smooth_prior import SmoothPrior, SparseSmoothPrior
 from conf.conf import DATA_DIR
 from src.models.utils import plot_heatmap, plot_scatter, plot_series
 
@@ -77,10 +78,10 @@ net_data = bolognani_net56
 # PCC cannot be reduced, else all the loads would need to be constant
 observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
                   32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
-#observed_nodes = list(range(1, 57))
+observed_nodes = list(range(1, 57))
 hidden_nodes = list(set(range(56)) - set(np.array(observed_nodes)-1))
 
-constant_power_hidden_nodes = False
+constant_power_hidden_nodes = True
 use_laplacian = False
 # PCC needs to be sub-Kron reduced if not removing the common mode
 # With data centering its voltage column is just zeros
@@ -126,7 +127,7 @@ np.random.seed(11)
 
 redo_loads = False
 redo_netsim = False
-redo_noise = True
+redo_noise = False
 redo_standard_methods = True
 redo_STLS = True
 max_iterations = 50
@@ -239,17 +240,24 @@ fparam = int(np.floor(ts.size/steps))
 if redo_noise:
     print("Adding noise and filtering...")
 
-    noisy_voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                    std_m=voltage_magnitude_sd, std_p=phase_sd,
-                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
-    noisy_current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                    std_m=current_magnitude_sd * pmu_ratings, std_p=phase_sd,
-                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
+    mg_stds = np.concatenate((voltage_magnitude_sd * np.ones_like(pmu_ratings), current_magnitude_sd * pmu_ratings))
 
-    voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
-    current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
+    # Needed to keep the same random order as before, otherwise just use np.arange(2*nodes)
+    # interweave_idx = [np.repeat(np.arange(nodes),2) + np.tile([0, nodes], nodes),
+    #                   np.hstack((np.arange(2*nodes)[0::2],np.arange(2*nodes)[1::2]))]
+
+    noisy_voltage, noisy_current = \
+        tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
+                                                       oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                                       std_m=mg_stds, std_p=phase_sd,
+                                                       noise_fcn=add_polar_noise_to_measurement,
+                                                       verbose=True), 2, axis=1))
+
+    voltage, current = \
+        tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
+                                                       oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
+                                                       std_m=None, std_p=None, noise_fcn=None,
+                                                       verbose=True), 2, axis=1))
     print("Done!")
 
     print("Saving filtered data...")
@@ -353,11 +361,6 @@ if redo_standard_methods:
     print("OLS identification...")
     ols = ComplexRegression()
     ols.fit(noisy_voltage, noisy_current)
-    #ols.fit(voltage, current.conj() * voltage)
-
-    # Singular if centered, not accurate if common mode in
-    # ols.fit(voltage, power)
-    #ols.fit(voltage - np.mean(voltage), current)
     y_ols = ols.fitted_admittance_matrix
     print("Done!")
 
@@ -374,10 +377,6 @@ if redo_standard_methods:
     print("TLS identification...")
     tls = TotalLeastSquares()
     tls.fit(noisy_voltage, noisy_current)
-    #tls.fit(noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1)),
-    #        noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1)))
-    #tls.fit(voltage - np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1)),
-    #        current - np.tile(np.mean(current, axis=0), (current.shape[0], 1)))
     y_tls = tls.fitted_admittance_matrix
     print("Done!")
 
@@ -391,26 +390,26 @@ if redo_standard_methods:
     # %%
     abs_tol = 1e-20
     rel_tol = 1e-20
+
+    # Create adaptive Lasso penalty
+    y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_ols), (newnodes, newnodes))
+    adaptive_lasso = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
+    prior = SparseSmoothPrior(smoothness_param=0.00001, n=len(E @ vectorize_matrix(y_tls))*2)
+    prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso.reshape((prior.n, 1)), SmoothPrior.LAPLACE)
+
     if use_laplacian:
-        lasso = BayesianRegression(lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10)
+        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
+                                   dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
+                                   e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
     else:
-        lasso = BayesianRegression(lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
+        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
                                    dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
 
     if max_iterations > 0:
-        # Create various priors, try with tls !!
-        y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
-        tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
-
         # Get or create starting data
         y_lasso = y_sym_ols.copy()
 
         print("Lasso identification...")
-        lasso.num_stability_param = 0.00001
-
-        # Adaptive weights
-        lasso.set_prior(SparseTotalLeastSquare.LAPLACE, None, np.diag(tls_weights_adaptive))
-
         lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
         y_lasso = lasso.fitted_admittance_matrix
         print("Done!")
@@ -457,13 +456,11 @@ print("Done!")
 
 # Bayesian priors definition
 """
-# Generate a prior tls_weights_all representing a chained network using the y_tls solution
+# Generate a prior using the y_tls solution
 # This prior can be defined as the following l1 regularization weights.
-# All lines admittances i->k are penalized by a parameter w_{i->k} except if k = i+1:
-# w_{i->k} = lambda / y_tls_{i->k} for adaptive Lasso weights.
+# w_{i->k} = lambda / y_tls_{i->k} for adaptive Lasso weights, for all i ≠ k
 #
-# y_tls can also be used as a reference for the sum of all elements on a row/column of Y
-# it adds this sum instead of the zero elements of the chain prior and centers is on diag(y_tls)
+# y_tls can also be used as a reference for the sum of all elements on a row/column of Y: contrast prior
 # To stay consistent with the adaptive Lasso weights, these sums are also normalized by |diag(y_tls)|
 #
 # Another prior inserts actual values for edges around nodes 2, 50 and 51, as well as the edge from 4->40
@@ -487,132 +484,58 @@ tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*v
 
 
 
-# Create constraint on the diagonal
 lambdaprime = 200
 contrast_each_row = True
 contrast_diag = False
 
+prior = SparseSmoothPrior(smoothness_param=1e-8, n=len(E @ vectorize_matrix(y_tls))*2)
+
+# Indices of all non-diagonal elements. We do not want to penalize diagonal ones (always non-zero)
+idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((newnodes, newnodes))
+                                                                    - np.eye(newnodes))) > 0)[0]
+
+prior.add_adaptive_sparsity_prior(indices=idx_offdiag,
+                                  values=np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls)))[idx_offdiag],
+                                  orders=SmoothPrior.LAPLACE)
+
+# If laplacian or variant hidden nodes, the total value estimate from non-diagonal elements is not the best
+if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:
+    values_contrast = np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls))))
+else:
+    values_contrast = -np.concatenate((np.real(np.sum(y_sym_tls_ns, axis=1)), np.imag(np.sum(y_sym_tls_ns, axis=1))))
+values_contrast = values_contrast if use_laplacian else -values_contrast
+values_contrast = values_contrast.reshape((len(values_contrast), 1))
+
 if contrast_each_row:
-    if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:  # TODO: understand this
-        diag_tls = np.diag(y_tls)
-    else:
-        diag_tls = -np.sum(y_sym_tls_ns, axis=1)
+    # Indices of the real part of each rows stacked with the indices of the imaginary part of each row
+    idx_contrast = np.vstack((np.array([np.where(make_real_vector(E @ vectorize_matrix(
+        np.eye(newnodes)[:, i:i+1] @ np.ones((1, newnodes))
+        + np.ones((newnodes, 1)) @ np.eye(newnodes)[i:i+1, :]
+        - 2*np.eye(newnodes)[:, i:i+1] @ np.eye(newnodes)[i:i+1, :])) > 0)[0] for i in range(newnodes)]),
+                              np.array([np.where(make_real_vector(1j*E @ vectorize_matrix(
+        np.eye(newnodes)[:, i:i+1] @ np.ones((1, newnodes))
+        + np.ones((newnodes, 1)) @ np.eye(newnodes)[i:i+1, :]
+        - 2*np.eye(newnodes)[:, i:i+1] @ np.eye(newnodes)[i:i+1, :])) > 0)[0] for i in range(newnodes)])))
 
-    """
-    print("diagonal elements estimation")
-    print(np.divide(np.abs(np.real(diag_tls - bus_diag_L)), np.abs(np.real(bus_diag_L))) +
-          np.divide(np.abs(np.imag(diag_tls - bus_diag_L)), np.abs(np.imag(bus_diag_L))))
+    prior.add_contrast_prior(indices=idx_contrast,
+                             values=values_contrast,
+                             weights=lambdaprime * np.concatenate((-np.ones((newnodes, 1)), np.ones((newnodes, 1)))),
+                             orders=SmoothPrior.LAPLACE)
 
-    print(bus_diag_L)
+    if contrast_diag:
+        idx_diag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.eye(newnodes))) > 0)[0]
 
-    print(np.sum(np.abs(np.real(bus_diag_L))) + np.sum(np.abs(np.imag(bus_diag_L))))
-    print(np.abs(np.sum(np.real(diag_tls - bus_diag_L))) + np.abs(np.sum(np.imag(diag_tls - bus_diag_L))))
-    """
-
-    tls_weights_sum = np.zeros((newnodes, tls_weights_adaptive.size))
-    for idx in range(newnodes):
-        # Indices of all entries in the same row
-        y_idx = np.vstack((np.zeros((idx, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 1, newnodes))))
-        y_idx = E @ vectorize_matrix(y_idx+y_idx.T - 2*np.diag(np.diag(y_idx)))
-
-        # Add to the idx's element in first lower diagonal
-        tls_weights_sum[idx, :y_idx.size] = \
-            y_idx / np.abs(np.real(diag_tls[idx])) * lambdaprime
-        tls_weights_sum[idx, y_idx.size:] = \
-            y_idx / np.abs(np.imag(diag_tls[idx])) * lambdaprime
-
-    tls_weights_sum = sparse.bmat([[np.diag(tls_weights_nondiag)],
-                                  [np.abs(sparse.bmat([[tls_weights_sum[:, :int(tls_weights_adaptive.size/2)], None],
-                                                       [None, tls_weights_sum[:, int(tls_weights_adaptive.size/2):]]],
-                                                       format='csr'))]], format='csr')
-
-    tls_centers_sum = np.concatenate((np.zeros((tls_weights_adaptive.size,)),
-                                      lambdaprime*make_real_vector((np.sign(np.real(diag_tls)) +
-                                                                   1j*np.sign(np.imag(diag_tls))))))
-    if not use_laplacian:
-        tls_centers_sum = -tls_centers_sum
-
-        if contrast_diag:
-            for idx in range(newnodes):
-                diag_tls_weight = np.diag(np.eye(newnodes)[:, idx]) \
-                                  * lambdaprime * (1/np.abs(np.diag(np.real(y_sym_tls))[idx])
-                                                   + 1j/np.abs(np.diag(np.imag(y_sym_tls))[idx]))
-                diag_weights = np.vstack([np.expand_dims(make_real_vector(E @ vectorize_matrix(np.real(diag_tls_weight))), axis=0),
-                                          np.expand_dims(make_real_vector(1j*E @ vectorize_matrix(np.imag(diag_tls_weight))), axis=0)])
-                tls_weights_sum = sparse.bmat([[tls_weights_sum], [sparse.csr_matrix(diag_weights)]], format='csr')
-
-                tls_centers_sum = np.concatenate((tls_centers_sum, lambdaprime *
-                                                  np.array([np.sign(np.diag(np.real(y_sym_tls))[idx]),
-                                                            np.sign(np.diag(np.imag(y_sym_tls))[idx])])))
+        prior.add_exact_prior(indices=idx_diag,
+                              values=np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls)))),
+                              weights=lambdaprime,
+                              orders=SmoothPrior.LAPLACE)
 
 else:
-    total_l1 = np.sum(np.abs(np.real(y_sym_tls_ns)))/2 + 1j*np.sum(np.abs(np.imag(y_sym_tls_ns)))/2 \
-        - np.sum(np.abs(np.real(y_sym_tls_ns[np.real(y_sym_tls_ns) > 0]))) \
-        - 1j*np.sum(np.abs(np.imag(y_sym_tls_ns[np.imag(y_sym_tls_ns) < 0])))
-    sum_mat = np.abs(E @ vectorize_matrix(np.ones(y_sym_tls.shape) - np.eye(y_sym_tls.shape[0])))
+    prior.add_contrast_prior(indices=np.vstack(tuple(np.split(idx_offdiag, 2))),
+                             values=-np.sum(np.vstack(tuple(np.hsplit(values_contrast.T, 2))), axis=1).T,
+                             weights=lambdaprime*np.array([[1], [-1]]),
+                             orders=SmoothPrior.LAPLACE)
 
-    tls_weights_sum = np.block([[np.diag(tls_weights_adaptive)],
-                                [make_real_vector(sum_mat)/np.real(total_l1)*lambdaprime],
-                                [make_real_vector(1j*sum_mat)/np.imag(total_l1)*lambdaprime]])
-    tls_centers_sum = np.concatenate((np.zeros(tls_weights_adaptive.shape), lambdaprime*np.array([1, -1])))
-
-"""
-# Adding prior information from measurements
-tls_bus_weights = 1j*np.zeros(y_sym_tls.shape)
-tls_bus_centers = 1j*np.zeros(y_sym_tls.shape)
-
-# Node 2
-tls_bus_weights[1, :], tls_bus_weights[:, 1] = (1+1j), (1+1j)
-tls_bus_centers[1, :], tls_bus_centers[:, 1] = 0, 0
-tls_bus_centers[1, 0], tls_bus_centers[0, 1] = y_bus[1, 0], y_bus[0, 1]
-tls_bus_centers[1, 2], tls_bus_centers[2, 1] = y_bus[1, 2], y_bus[2, 1]
-
-# Node 50 & 51
-tls_bus_weights[46, :], tls_bus_weights[:, 46] = (1+1j), (1+1j)
-tls_bus_centers[46, :], tls_bus_centers[:, 46] = 0, 0
-tls_bus_centers[45, 46], tls_bus_centers[46, 45] = y_bus[45, 46], y_bus[46, 45]
-tls_bus_weights[47, :], tls_bus_weights[:, 47] = (1+1j), (1+1j)
-tls_bus_centers[47, :], tls_bus_centers[:, 47] = 0, 0
-tls_bus_centers[47, 46], tls_bus_centers[46, 47] = y_bus[47, 46], y_bus[46, 47]
-tls_bus_centers[47, 48], tls_bus_centers[48, 47] = y_bus[47, 48], y_bus[48, 47]
-tls_bus_centers[47, 49], tls_bus_centers[49, 47] = y_bus[47, 49], y_bus[49, 47]
-
-# line 4->40
-tls_bus_weights[3, 36], tls_bus_weights[36, 3] = (1+1j), (1+1j)
-tls_bus_centers[3, 36], tls_bus_centers[36, 3] = y_bus[3, 36], y_bus[36, 3]
-#tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
-#tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
-"""
-"""
-# Node 1
-tls_bus_weights[0, :], tls_bus_weights[:, 0] = (1+1j), (1+1j)
-tls_bus_centers[0, :], tls_bus_centers[:, 0] = 0, 0
-tls_bus_centers[0, 52], tls_bus_centers[0, 52] = y_bus[52, 0], y_bus[0, 52]
-tls_bus_centers[1, 0], tls_bus_centers[0, 1] = y_bus[1, 0], y_bus[0, 1]
-
-# Node 11
-tls_bus_weights[9, :], tls_bus_weights[:, 9] = (1+1j), (1+1j)
-tls_bus_centers[9, :], tls_bus_centers[:, 9] = 0, 0
-tls_bus_centers[10, 9], tls_bus_centers[9, 10] = y_bus[10, 9], y_bus[9, 10]
-tls_bus_centers[8, 9], tls_bus_centers[9, 8] = y_bus[8, 9], y_bus[9, 8]
-tls_bus_centers[9, 15], tls_bus_centers[15, 9] = y_bus[9, 15], y_bus[15, 9]
-
-# line 4->5
-tls_bus_weights[3, 4], tls_bus_weights[4, 3] = (1+1j), (1+1j)
-tls_bus_centers[3, 4], tls_bus_centers[4, 3] = y_bus[3, 4], y_bus[4, 3]
-"""
-"""
-# Vectorize and add to the rest
-tls_bus_weights = np.multiply(tls_weights_adaptive, np.abs(make_real_vector(E @ vectorize_matrix(tls_bus_weights))))
-tls_bus_centers = make_real_vector(E @ vectorize_matrix(tls_bus_centers))
-for i in range(tls_weights_sum.shape[0]):
-    if tls_bus_weights[i] != 0:
-        # Uncomment to introduce the measurements
-        # tls_weights_sum[i, :] = 0
-        # tls_weights_sum[i, i] = 100*tls_bus_weights[i]
-        # tls_centers_sum[i] = tls_weights_sum[i, i] * tls_bus_centers[i]
-        pass
-"""
 # %% md
 
 # L1 Regularized weighted TLS
@@ -629,13 +552,15 @@ for i in range(tls_weights_sum.shape[0]):
 
 abs_tol = 1e-10*1e1
 rel_tol = 1e-10*10e-3
-#lam = 2e13#4e10#8e7
-lam = 4e11#4e10#8e7
+lam = 2e13#4e10#8e7
+#lam = 4e11#4e10#8e7
 if use_laplacian:
-    sparse_tls_cov = SparseTotalLeastSquare(lambda_value=lam, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations)
+    sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=lam, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations,
+                                           dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
+                                           e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
 else:
-    sparse_tls_cov = SparseTotalLeastSquare(lambda_value=lam, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations,
-                                            dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
+    sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=lam, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=max_iterations,
+                                           dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
 
 if max_iterations > 0:
     # Get or create starting data
@@ -659,17 +584,9 @@ if max_iterations > 0:
     print("Done!")
 
     print("STLS identification...")
-    sparse_tls_cov.num_stability_param = 1e-8
 
     # Dual ascent parameters, set > 0 to activate
     sparse_tls_cov.l1_multiplier_step_size = 0*1#0.2*0.000001#2#0.02
-    #sparse_tls_cov.l1_target = 1.0 * 0.5 * np.sum(np.abs(make_real_vector(np.diag(y_tls))))
-
-    # Priors: l0, l1, and l2
-    #sparse_tls_cov.set_prior(SparseTotalLeastSquare.DELTA, None, np.eye(tls_weights_all.size))
-    #sparse_tls_cov.set_prior(SparseTotalLeastSquare.LAPLACE, None, np.diag(tls_weights_adaptive))
-    sparse_tls_cov.set_prior(SparseTotalLeastSquare.LAPLACE, tls_centers_sum, tls_weights_sum)
-    #sparse_tls_cov.set_prior(SparseTotalLeastSquare.GAUSS, None, np.power(np.diag(tls_weights_all), 2))
 
     sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_sparse_tls_cov)
     print("Done!")
@@ -685,13 +602,11 @@ if max_iterations > 0:
                                                                     for i in sparse_tls_cov.iterations]), ignore_index=True)
     sparse_tls_cov_targets = sparse_tls_cov_targets.append(pd.Series([i.target_function
                                                                       for i in sparse_tls_cov.iterations]), ignore_index=True)
-    sparse_tls_cov_multipliers = sparse_tls_cov_multipliers.append(pd.Series(sparse_tls_cov.tmp), ignore_index=True)
     print("Done!")
 
     print("Saving final result...")
     sim_STLS = {'y': y_sparse_tls_cov, 'e': sparse_tls_cov_errors.to_numpy(),
-                't': sparse_tls_cov_targets.to_numpy(), 'm': sparse_tls_cov_multipliers.to_numpy(),
-                'v': estimated_voltage, 'i': estimated_current}
+                't': sparse_tls_cov_targets.to_numpy(), 'v': estimated_voltage, 'i': estimated_current}
     np.savez(DATA_DIR / ("simulations_output/final_results_" + str(nodes) + ".npz"), **sim_STLS)
     print("Done!")
 
@@ -702,7 +617,6 @@ sim_STLS = np.load(DATA_DIR / ("simulations_output/final_results_" + str(nodes) 
 y_sparse_tls_cov = sim_STLS["y"]
 sparse_tls_cov_errors = pd.Series(sim_STLS["e"])
 sparse_tls_cov_targets = pd.Series(sim_STLS["t"])
-sparse_tls_cov_multipliers = pd.Series(sim_STLS["m"])
 estimated_voltage = sim_STLS["v"]
 estimated_current = sim_STLS["i"]
 print("Done!")
@@ -720,7 +634,6 @@ plot_heatmap(undel_kron(np.abs(y_sparse_tls_cov - y_sym_tls), idx_todel),
 
 plot_series(np.expand_dims(sparse_tls_cov_errors.to_numpy(), axis=1), 'errors', s=3, colormap='blue2')
 plot_series(np.expand_dims(sparse_tls_cov_targets[1:].to_numpy(), axis=1), 'targets', s=3, colormap='blue2')
-plot_series(np.expand_dims(sparse_tls_cov_multipliers.to_numpy(), axis=1), 'multipliers', s=3, colormap='blue2')
 
 y_comp_idx = (np.abs(E @ vectorize_matrix(np.abs(y_bus-np.diag(np.diag(y_bus)))))) > 0
 y_comp = np.array([E @ vectorize_matrix(y_ols), E @ vectorize_matrix(y_tls), E @ vectorize_matrix(y_lasso),
@@ -746,9 +659,11 @@ with open(DATA_DIR / 'sparsity_metrics.txt', 'w') as f:
 
 # Error covariance of result
 """
-# What follows is not yet on the proram.
+# What follows is not yet on the program.
 """
 # %%
+
+exit(0)
 
 if redo_covariance:
     print("Calculating data covariance matrices...")

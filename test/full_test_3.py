@@ -418,9 +418,6 @@ y_ols = sim_ST['o']
 y_tls = sim_ST['t']
 y_lasso = sim_ST['l']
 
-#TODO: remove this
-#y_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
-
 ols_metrics = error_metrics(y_bus, y_ols)
 print(ols_metrics)
 with open(DATA_DIR / 'ols_error_metrics.txt', 'w') as f:
@@ -459,99 +456,38 @@ print("Done!")
 """
 # %%
 
+# TODO: design priors for 3 phased net
+exit(0)
+
 # Make tls solution symmetric
 y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
-y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
-
-
-
-prior = SmoothPrior(n=len(E @ vectorize_matrix(y_tls)))
-
-idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((newnodes, newnodes))
-                                                                    - np.eye(newnodes))) > 0)
-prior.add_adaptive_sparsity_prior(indices=idx_offdiag,
-                                  values=np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls)))[idx_offdiag])
-
-#idx_contrast = np.zeros((2*newnodes, ))
-
 
 # Create adaptive chain network prior
 tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls))), 1.0))
-tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*vectorize_matrix(np.eye(newnodes)))))
-
-
-
-exit(0)
+tls_weights_chain = make_real_vector(E @ ((1+1j)*vectorize_matrix(3*np.diag(np.ones(newnodes)) -
+                                                                  np.tri(newnodes, newnodes, 1) +
+                                                                  np.tri(newnodes, newnodes, -2))))
+tls_weights_chain = np.ones(tls_weights_chain.shape) - tls_weights_chain
+tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_chain)
 
 # Create constraint on the diagonal
-lambdaprime = 200
-contrast_each_row = True
-contrast_diag = False
+tls_weights_sum = np.zeros((newnodes*newnodes, int(newnodes*(newnodes-1))))
+for idx in range(newnodes-1):
+    # Indices of all entries in the same row
+    y_idx = np.vstack((np.zeros((idx+1, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 2, newnodes))))
+    y_idx = E @ vectorize_matrix(y_idx+y_idx.T)
 
-if contrast_each_row:
-    if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or use_laplacian:  # TODO: understand this
-        diag_tls = np.diag(y_tls)
-    else:
-        diag_tls = -np.sum(y_sym_tls_ns, axis=1)
+    # Add to the idx's element in first lower diagonal
+    tls_weights_sum[idx*(newnodes+1) + 1, :int(newnodes*(newnodes-1)/2)] = \
+        y_idx / np.abs(np.real(np.diag(y_sym_tls)[idx+1]))
+    tls_weights_sum[idx*(newnodes+1) + 1, int(newnodes*(newnodes-1)/2):] = \
+        y_idx / np.abs(np.imag(np.diag(y_sym_tls)[idx+1]))
 
-    """
-    print("diagonal elements estimation")
-    print(np.divide(np.abs(np.real(diag_tls - bus_diag_L)), np.abs(np.real(bus_diag_L))) +
-          np.divide(np.abs(np.imag(diag_tls - bus_diag_L)), np.abs(np.imag(bus_diag_L))))
-
-    print(bus_diag_L)
-
-    print(np.sum(np.abs(np.real(bus_diag_L))) + np.sum(np.abs(np.imag(bus_diag_L))))
-    print(np.abs(np.sum(np.real(diag_tls - bus_diag_L))) + np.abs(np.sum(np.imag(diag_tls - bus_diag_L))))
-    """
-
-    tls_weights_sum = np.zeros((newnodes, tls_weights_adaptive.size))
-    for idx in range(newnodes):
-        # Indices of all entries in the same row
-        y_idx = np.vstack((np.zeros((idx, newnodes)), np.ones((1, newnodes)), np.zeros((newnodes - idx - 1, newnodes))))
-        y_idx = E @ vectorize_matrix(y_idx+y_idx.T - 2*np.diag(np.diag(y_idx)))
-
-        # Add to the idx's element in first lower diagonal
-        tls_weights_sum[idx, :y_idx.size] = \
-            y_idx / np.abs(np.real(diag_tls[idx])) * lambdaprime
-        tls_weights_sum[idx, y_idx.size:] = \
-            y_idx / np.abs(np.imag(diag_tls[idx])) * lambdaprime
-
-    tls_weights_sum = sparse.bmat([[np.diag(tls_weights_nondiag)],
-                                  [np.abs(sparse.bmat([[tls_weights_sum[:, :int(tls_weights_adaptive.size/2)], None],
-                                                       [None, tls_weights_sum[:, int(tls_weights_adaptive.size/2):]]],
-                                                       format='csr'))]], format='csr')
-
-    tls_centers_sum = np.concatenate((np.zeros((tls_weights_adaptive.size,)),
-                                      lambdaprime*make_real_vector((np.sign(np.real(diag_tls)) +
-                                                                   1j*np.sign(np.imag(diag_tls))))))
-    if not use_laplacian:
-        tls_centers_sum = -tls_centers_sum
-
-        if contrast_diag:
-            for idx in range(newnodes):
-                diag_tls_weight = np.diag(np.eye(newnodes)[:, idx]) \
-                                  * lambdaprime * (1/np.abs(np.diag(np.real(y_sym_tls))[idx])
-                                                   + 1j/np.abs(np.diag(np.imag(y_sym_tls))[idx]))
-                diag_weights = np.vstack([np.expand_dims(make_real_vector(E @ vectorize_matrix(np.real(diag_tls_weight))), axis=0),
-                                          np.expand_dims(make_real_vector(1j*E @ vectorize_matrix(np.imag(diag_tls_weight))), axis=0)])
-                tls_weights_sum = sparse.bmat([[tls_weights_sum], [sparse.csr_matrix(diag_weights)]], format='csr')
-
-                tls_centers_sum = np.concatenate((tls_centers_sum, lambdaprime *
-                                                  np.array([np.sign(np.diag(np.real(y_sym_tls))[idx]),
-                                                            np.sign(np.diag(np.imag(y_sym_tls))[idx])])))
-
-else:
-    total_l1 = np.sum(np.abs(np.real(y_sym_tls_ns)))/2 + 1j*np.sum(np.abs(np.imag(y_sym_tls_ns)))/2 \
-        - np.sum(np.abs(np.real(y_sym_tls_ns[np.real(y_sym_tls_ns) > 0]))) \
-        - 1j*np.sum(np.abs(np.imag(y_sym_tls_ns[np.imag(y_sym_tls_ns) < 0])))
-    sum_mat = np.abs(E @ vectorize_matrix(np.ones(y_sym_tls.shape) - np.eye(y_sym_tls.shape[0])))
-
-    tls_weights_sum = np.block([[np.diag(tls_weights_adaptive)],
-                                [make_real_vector(sum_mat)/np.real(total_l1)*lambdaprime],
-                                [make_real_vector(1j*sum_mat)/np.imag(total_l1)*lambdaprime]])
-    tls_centers_sum = np.concatenate((np.zeros(tls_weights_adaptive.shape), lambdaprime*np.array([1, -1])))
-
+tls_weights_sum = sparse.bmat([[E @ tls_weights_sum[:, :int(newnodes*(newnodes-1)/2)], None],
+                               [None, E @ tls_weights_sum[:, int(newnodes*(newnodes-1)/2):]]], format='csr')
+tls_weights_sum = np.diag(np.multiply(tls_weights_adaptive, tls_weights_chain)) + 200*np.abs(tls_weights_sum)
+tls_centers_sum = 200*make_real_vector(-E @ vectorize_matrix(np.diag(np.diag(np.sign(np.real(y_sym_tls)) +
+                                                                             1j*np.sign(np.imag(y_sym_tls)))[1:], -1)))
 
 """
 # Adding prior information from measurements
