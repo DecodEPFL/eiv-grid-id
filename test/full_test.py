@@ -67,8 +67,9 @@ def undel_kron(m, idx):
 
 # %%
 
-P_PROFILE = "Electricity_Profile_RNEplus.csv"
+# TODO: move these params to conf + bash arguments
 
+P_PROFILE = "Electricity_Profile_RNEplus.csv"
 
 bus_data = bolognani_bus56
 for b in bus_data:
@@ -468,26 +469,15 @@ print("Done!")
 """
 # %%
 
-# Make tls solution symmetric
-y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
-y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
-
-# Create adaptive chain network prior
-tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls))), 1.0))
-tls_weights_chain = make_real_vector(E @ ((1+1j)*vectorize_matrix((3 if use_laplacian else 2)*np.diag(np.ones(newnodes))
-                                                                  - np.tri(newnodes, newnodes, 1)
-                                                                  + np.tri(newnodes, newnodes, -2))))
-tls_weights_chain = np.ones(tls_weights_chain.shape) + (-tls_weights_chain if use_laplacian else tls_weights_chain)
-tls_weights_all = np.multiply(tls_weights_adaptive, tls_weights_chain)
-
-tls_weights_nondiag = tls_weights_adaptive * (1 - make_real_vector(E @ ((1+1j)*vectorize_matrix(np.eye(newnodes)))))
-
-
-
 lambdaprime = 200
 contrast_each_row = True
 contrast_diag = False
 
+# Make tls solution symmetric
+y_sym_tls = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
+y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
+
+# Make base prior
 prior = SparseSmoothPrior(smoothness_param=1e-8, n=len(E @ vectorize_matrix(y_tls))*2)
 
 # Indices of all non-diagonal elements. We do not want to penalize diagonal ones (always non-zero)
