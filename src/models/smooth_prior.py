@@ -38,7 +38,7 @@ class SmoothPrior(BayesianPrior):
     GAUSS = 2
 
     def log_distribution(self, x):
-        w = (np.abs(self.L @ x.squeeze() - self.mu.squeeze()) ** (2 - self.gamma.squeeze())) + self.alpha
+        w = (np.abs(self.L @ x.squeeze() - self.mu) ** (2 - self.gamma)) + self.alpha
 
         A = self.L.T @ np.diag(np.divide(1, w)) @ self.L
         b = self.L.T @ np.diag(np.divide(1, w)) @ self.mu
@@ -56,8 +56,8 @@ class SmoothPrior(BayesianPrior):
         """
         BayesianPrior.add_exact_prior(self, indices, values, weights)
 
-        orders = np.reshape(self._std_weights(orders, values), (len(indices), 1))
-        self.gamma = np.vstack((self.gamma, orders))
+        orders = self._std_weights(orders, values)
+        self.gamma = np.concatenate((self.gamma, orders))
 
     def add_sparsity_prior(self, indices, weights=None, orders=2):
         """
@@ -69,8 +69,8 @@ class SmoothPrior(BayesianPrior):
         """
         BayesianPrior.add_sparsity_prior(self, indices, weights)
 
-        orders = np.reshape(self._std_weights(orders, np.array(indices)), (len(indices), 1))
-        self.gamma = np.vstack((self.gamma, orders))
+        orders = self._std_weights(orders, np.array(indices))
+        self.gamma = np.concatenate((self.gamma, orders))
 
     def add_adaptive_sparsity_prior(self, indices, values, orders=2):
         """
@@ -83,8 +83,8 @@ class SmoothPrior(BayesianPrior):
         """
         BayesianPrior.add_adaptive_sparsity_prior(self, indices, values)
 
-        orders = np.reshape(self._std_weights(orders, values), (len(indices), 1))
-        self.gamma = np.vstack((self.gamma, orders))
+        orders = self._std_weights(orders, values)
+        self.gamma = np.concatenate((self.gamma, orders))
 
     def add_contrast_prior(self, indices, values, weights=None, orders=2):
         """
@@ -97,8 +97,8 @@ class SmoothPrior(BayesianPrior):
         """
         BayesianPrior.add_contrast_prior(self, indices, values, weights)
 
-        orders = np.reshape(self._std_weights(orders, values), (len(indices), 1))
-        self.gamma = np.vstack((self.gamma, orders))
+        orders = self._std_weights(orders, values)
+        self.gamma = np.concatenate((self.gamma, orders))
 
     def add_ratios_prior(self, indices, values, weights=None, orders=2):
         """
@@ -111,8 +111,8 @@ class SmoothPrior(BayesianPrior):
         """
         BayesianPrior.add_ratios_prior(self, indices, values, weights)
 
-        orders = np.reshape(self._std_weights(orders, values), (len(indices), 1))
-        self.gamma = np.vstack((self.gamma, orders))
+        orders = self._std_weights(orders, values)
+        self.gamma = np.concatenate((self.gamma, orders))
 
 
 class SparseSmoothPrior(SmoothPrior):
@@ -125,7 +125,7 @@ class SparseSmoothPrior(SmoothPrior):
         self.L = sparse.csr_matrix(self.L)
 
     def log_distribution(self, x):
-        w = (np.abs(self.L @ x.squeeze() - self.mu.squeeze()) ** (2 - self.gamma.squeeze())) + self.alpha
+        w = (np.abs(self.L @ x.squeeze() - self.mu) ** (2 - self.gamma)) + self.alpha
         W = sparse.diags(np.divide(1, w), format='csr')
 
         A = self.L.T @ W @ self.L

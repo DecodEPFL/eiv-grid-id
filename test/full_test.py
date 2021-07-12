@@ -396,7 +396,7 @@ if redo_standard_methods:
     y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_ols), (newnodes, newnodes))
     adaptive_lasso = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
     prior = SparseSmoothPrior(smoothness_param=0.00001, n=len(E @ vectorize_matrix(y_tls))*2)
-    prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso.reshape((prior.n, 1)), SmoothPrior.LAPLACE)
+    prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
 
     if use_laplacian:
         lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
@@ -494,7 +494,6 @@ if (not constant_power_hidden_nodes and observed_nodes != list(range(1, 57))) or
 else:
     values_contrast = -np.concatenate((np.real(np.sum(y_sym_tls_ns, axis=1)), np.imag(np.sum(y_sym_tls_ns, axis=1))))
 values_contrast = values_contrast if use_laplacian else -values_contrast
-values_contrast = values_contrast.reshape((len(values_contrast), 1))
 
 if contrast_each_row:
     # Indices of the real part of each rows stacked with the indices of the imaginary part of each row
@@ -509,7 +508,7 @@ if contrast_each_row:
 
     prior.add_contrast_prior(indices=idx_contrast,
                              values=values_contrast,
-                             weights=lambdaprime * np.concatenate((-np.ones((newnodes, 1)), np.ones((newnodes, 1)))),
+                             weights=lambdaprime * np.concatenate((-np.ones(newnodes), np.ones(newnodes))),
                              orders=SmoothPrior.LAPLACE)
 
     if contrast_diag:
@@ -522,8 +521,8 @@ if contrast_each_row:
 
 else:
     prior.add_contrast_prior(indices=np.vstack(tuple(np.split(idx_offdiag, 2))),
-                             values=-np.sum(np.vstack(tuple(np.hsplit(values_contrast.T, 2))), axis=1).T,
-                             weights=lambdaprime*np.array([[1], [-1]]),
+                             values=-np.sum(np.vstack(tuple(np.split(values_contrast, 2))), axis=1).squeeze(),
+                             weights=lambdaprime*np.array([1, -1]),
                              orders=SmoothPrior.LAPLACE)
 
 # %% md

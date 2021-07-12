@@ -23,7 +23,7 @@ class BayesianPrior(object):
 
     def __init__(self, n=0, other=None):
         self.L = other.L if other is not None else np.zeros((0,n))
-        self.mu = other.mu if other is not None else np.zeros((0,1))
+        self.mu = other.mu if other is not None else np.zeros(0)
         self.n = n
 
     def _std_weights(self, weights, standard):
@@ -44,10 +44,10 @@ class BayesianPrior(object):
         """
         weights = self._std_weights(weights, values)
 
-        self.mu = np.vstack((self.mu, np.reshape(weights,(len(indices), 1))))
+        self.mu = np.concatenate((self.mu, weights))
         added_L = np.zeros((len(indices), self.n))
         for i in range(len(indices)):
-            added_L[i, indices[i]] = -weights[i]/values[i]
+            added_L[i, indices[i]] = weights[i]/values[i]
 
         self.L = np.vstack((self.L, added_L))
 
@@ -58,9 +58,9 @@ class BayesianPrior(object):
         :param indices: indices of the parameters on which the prior apply
         :param weights: uncertainty on the significance of the parameter: high if weight is low
         """
-        weights = self._std_weights(weights, np.array(indices))
+        weights = self._std_weights(weights, np.array(indices, dtype=self.mu.dtype))
 
-        self.mu = np.vstack((self.mu, np.zeros((len(indices),1))))
+        self.mu = np.concatenate((self.mu, np.zeros(len(indices))))
         added_L = np.zeros((len(indices), self.n))
         for i in range(len(indices)):
             added_L[i, indices[i]] = weights[i]
@@ -75,7 +75,7 @@ class BayesianPrior(object):
         :param indices: indices of the parameters on which the prior apply
         :param values: values of the parameters for corresponding indices
         """
-        self.mu = np.vstack((self.mu, np.zeros((len(indices),1))))
+        self.mu = np.concatenate((self.mu, np.zeros(len(indices))))
         added_L = np.zeros((len(indices), self.n))
         for i in range(len(indices)):
             added_L[i, indices[i]] = 1.0/values[i]
@@ -92,7 +92,7 @@ class BayesianPrior(object):
         """
         weights = self._std_weights(weights, values)
 
-        self.mu = np.vstack((self.mu, weights))
+        self.mu = np.concatenate((self.mu, weights))
         added_L = np.zeros((indices.shape[0], self.n))
         for i in range(indices.shape[0]):
             added_L[i, indices[i, :]] = weights[i] / values[i]
@@ -108,9 +108,9 @@ class BayesianPrior(object):
         :param weights: weights for summing each row
         """
         assert(indices.shape[1] >= 2)
-        weights = self._std_weights(weights, np.array(indices[:, 0]))
+        weights = self._std_weights(weights, np.array(indices[:, 0], dtype=self.mu.dtype))
 
-        self.mu = np.vstack((self.mu, np.zeros((len(indices),1))))
+        self.mu = np.concatenate((self.mu, np.zeros(len(indices))))
         added_L = np.zeros((indices.shape[0], self.n))
         for i in range(indices.shape[0]):
             added_L[i, indices[i, :]] = np.array([1, -values[i]])*weights[i]
