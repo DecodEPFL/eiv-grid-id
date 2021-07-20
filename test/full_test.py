@@ -4,21 +4,8 @@
 
 # %%
 
-import pandapower as pp
-import pandapower.networks as pnet
 import pandas as pd
 import numpy as np
-import scipy as sp
-import cvxpy as cp
-import seaborn as sns
-from tqdm import tqdm
-
-from scipy import sparse
-from scipy.io import loadmat
-from scipy.interpolate import interp1d
-from scipy.ndimage import convolve1d
-import matplotlib.pyplot as plt
-import matplotlib as mpl
 
 # %%
 
@@ -34,18 +21,15 @@ import sys
 sys.path.insert(1, '..')
 
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, transformation_matrix, \
-                                         make_complex_vector, unvectorize_matrix, elimination_sym_matrix,\
-                                         elimination_lap_matrix, undelete
-from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
+    unvectorize_matrix, elimination_sym_matrix,\
+                                         elimination_lap_matrix
 from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, BayesianEIVRegression
-from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
-from src.simulation.simulation import SimulatedNet
-from src.simulation.net_templates import bolognani_bus21, bolognani_net21, bolognani_bus56, bolognani_net56, \
-                                         bolognani_bus33, bolognani_net33, cigre_mv_feeder1_bus, cigre_mv_feeder1_net
-from src.identification.error_metrics import error_metrics, fro_error, rrms_error
-from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
+from src.simulation.net_templates import bolognani56_bus, bolognani56_net
+from src.models.error_metrics import error_metrics, rrms_error
+from src.models.noise_transformation import average_true_noise_covariance
 from src.models.smooth_prior import SmoothPrior, SparseSmoothPrior
+from src.simulation import run
 from conf.conf import DATA_DIR
 from src.models.utils import plot_heatmap, plot_scatter, plot_series
 
@@ -69,13 +53,8 @@ def undel_kron(m, idx):
 
 # TODO: move these params to conf + bash arguments
 
-P_PROFILE = "Electricity_Profile_RNEplus.csv"
+P_PROFILE = "Electricity_Profile_RNEplus.npy"
 
-bus_data = bolognani_bus56
-for b in bus_data:
-    b.id = b.id - 1
-
-net_data = bolognani_net56
 # PCC cannot be reduced, else all the loads would need to be constant
 observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
                   32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
@@ -87,12 +66,8 @@ use_laplacian = False
 # PCC needs to be sub-Kron reduced if not removing the common mode
 # With data centering its voltage column is just zeros
 if not use_laplacian:
-    hidden_nodes.append(55)
+    hidden_nodes.append(56)
 
-for l in net_data:
-    l.length = l.length * 0.3048 / 1000
-    l.start_bus = l.start_bus - 1
-    l.end_bus = l.end_bus - 1
 
 """
 bus_data = cigre_mv_feeder1_bus
@@ -107,9 +82,6 @@ for l in net_data:
 
 # %%
 
-net = SimulatedNet(bus_data, net_data)
-nodes = len(bus_data)
-
 selected_weeks = np.array([12])
 days = len(selected_weeks)*30
 steps = 15000 # 500
@@ -122,8 +94,6 @@ fmeas = 100 # [Hz] # 50
 max_plot_y = 18000
 max_plot_err = 5000
 
-np.random.seed(11)
-
 # %%
 
 redo_loads = False
@@ -132,59 +102,18 @@ redo_noise = False
 redo_standard_methods = True
 redo_STLS = True
 max_iterations = 50
-redo_covariance = False
+
+use_equivalent_noise = True
 
 # %% md
 
-# PMU ratings
-"""
-# Defining ratings for the PMU to estimate noise levels.
-# Assuming each PMU is dimensioned properly for its node,
-# we use $\frac{|S|}{|V_{\text{rated}}|}$ as rated current.
-# Voltages being normalized, it simply becomes $|S|$.
-"""
-# %%
+net = run.make_net("bolognani56", bolognani56_bus, bolognani56_net)
+nodes = len(net.bus.index)
 
-pmu_safety_factor = 4
-pmu_ratings = np.array([pmu_safety_factor*np.sqrt(i.Pd*i.Pd + i.Qd*i.Qd) for i in bus_data])
-pmu_ratings[-1] = np.sum(pmu_ratings) # injection from the grid
-
-# %% md
-
-# Load profiles
-"""
-# Getting profiles as PQ loads every minute for 365 days for 1000 households.
-# Summing up random households until nominal power of the Bus is reached.
-"""
-# %%
-
-if redo_loads:
-    times = np.array(range(days*24*60))*60 #[s]
-
-    print("Reading standard profiles...")
-
-    #load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
-    load_p, load_q = load_profile_from_csv(active_file=DATA_DIR / str("profiles/" + P_PROFILE),
-                                           reactive_file=DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
-                                           skip_header=selected_weeks*7*24*60,
-                                           skip_footer=np.array(365*24*60 - selected_weeks*7*24*60
-                                                              - days/len(selected_weeks)*24*60, dtype=np.int64),
-                                           load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
-                                                                      for i in range(len(net.load.p_mw))]),
-                                           load_q_reference = np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
-                                                                        for i in range(len(net.load.q_mvar))]),
-                                           load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None, verbose=True
-                                           )
-
-    print("Saving loads...")
-    sim_PQ = {'p': load_p, 'q': load_q, 't': times}
-    np.savez(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"), **sim_PQ)
-    print("Done!")
-
-print("Loading loads...")
-sim_PQ = np.load(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"))
-load_p, load_q, times = sim_PQ["p"], sim_PQ["q"], sim_PQ["t"]
-print("Done!")
+load_p, load_q, times = run.generate_loads(net, (DATA_DIR / str("profiles/" + P_PROFILE),
+                                                 DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
+                                                 selected_weeks,
+                                                 days, hidden_nodes) if redo_loads else None, verbose=True)
 
 # %% md
 
@@ -196,80 +125,15 @@ print("Done!")
 
 # %% md
 
-# Network simulation
-"""
-# Generating corresponding voltages and currents using the NetData object.
-"""
-# %%
-
-if redo_netsim:
-    print("Simulating network...")
-    y_bus = net.make_y_bus()
-    voltage, current = net.run(load_p, load_q).get_current_and_voltage()
-    print("Done!")
-
-    print("Saving data...")
-    sim_IV = {'i': current, 'v': voltage, 'y': y_bus, 't': times}
-    np.savez(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"), **sim_IV)
-    print("Done!")
-
-# %%
-
-print("Loading data...")
-sim_IV = np.load(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"))
-voltage, current, y_bus, times = sim_IV["v"], sim_IV["i"], sim_IV["y"], sim_IV["t"]
-print("Done!")
+voltage, current, y_bus = run.simulate_net(net, load_p if redo_netsim else None, load_q, verbose=True)
 
 # %% md
 
-# Noise Generation
-"""
-# Extrapolating voltages from 1 per minute to 100 per seconds linearly.
-# Adding noise in polar coordinates to these measurements,
-# then applying a moving average (low pass discrete filter) of length fparam,
-# and undersampling the data every fparam as well.
-# The data is also centered for more statistical stability.
-# Rescaling the standard deviations of the noise in consequence.
-#
-# resampling the actual voltages and currents using linear extrapolation as well
-# for matrix dimensions consistency.
-"""
-# %%
-
-ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
-fparam = int(np.floor(ts.size/steps))
-if redo_noise:
-    print("Adding noise and filtering...")
-
-    mg_stds = np.concatenate((voltage_magnitude_sd * np.ones_like(pmu_ratings), current_magnitude_sd * pmu_ratings))
-
-    # Needed to keep the same random order as before, otherwise just use np.arange(2*nodes)
-    # interweave_idx = [np.repeat(np.arange(nodes),2) + np.tile([0, nodes], nodes),
-    #                   np.hstack((np.arange(2*nodes)[0::2],np.arange(2*nodes)[1::2]))]
-
-    noisy_voltage, noisy_current = \
-        tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
-                                                       oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                       std_m=mg_stds, std_p=phase_sd,
-                                                       noise_fcn=add_polar_noise_to_measurement,
-                                                       verbose=True), 2, axis=1))
-
-    voltage, current = \
-        tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
-                                                       oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                       std_m=None, std_p=None, noise_fcn=None,
-                                                       verbose=True), 2, axis=1))
-    print("Done!")
-
-    print("Saving filtered data...")
-    sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'j': current, 'w': voltage, 'y': y_bus}
-    np.savez(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"), **sim_IV)
-    print("Done!")
-
-print("Loading filtered data...")
-sim_IV = np.load(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"))
-noisy_voltage, noisy_current, voltage, current, y_bus = sim_IV["v"], sim_IV["i"], sim_IV["w"], sim_IV["j"], sim_IV["y"]
-print("Done!")
+noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam = \
+    run.add_noise_and_filter(net, voltage, current, times, fmeas, steps,
+                             (voltage_magnitude_sd, current_magnitude_sd, phase_sd,
+                              use_equivalent_noise, 4) if redo_noise else None,
+                             verbose=True)
 
 # %% md
 
@@ -294,6 +158,11 @@ hidden_idx = [idx for idx in hidden_idx if idx not in pcc_idx]
 # subKron reducing the ext_grid
 if not use_laplacian:
     y_bus = np.delete(np.delete(y_bus, pcc_idx, axis=1), pcc_idx, axis=0)
+
+    # Shift larger indices because y_bus gets smaller
+    for i in pcc_idx:
+        hidden_idx = [(idx-1 if idx > i else idx) for idx in hidden_idx]
+        passive_idx = [(idx-1 if idx > i else idx) for idx in passive_idx]
 
 # Kron reduction of passive and hidden nodes
 shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
@@ -329,9 +198,7 @@ print("Done!")
 
 # %%
 
-q, r = np.linalg.qr(voltage)
-stcplt = pd.Series(np.log10(np.abs(np.diag(r)[1:]/r[0, 0])).tolist())
-plot_series(np.expand_dims(stcplt.to_numpy(), axis=1), 'correlations', s=3, colormap='blue2')
+plot_series(np.log10(np.std(voltage, axis=0)).reshape((newnodes, 1)), 'correlations', s=3, colormap='blue2')
 
 # %%
 
@@ -399,11 +266,11 @@ if redo_standard_methods:
     prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
 
     if use_laplacian:
-        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
+        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=2,
                                    dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
                                    e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
     else:
-        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10,
+        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=2,
                                    dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
 
     if max_iterations > 0:
@@ -582,8 +449,6 @@ if max_iterations > 0:
 
     print("Extracting results...")
     y_sparse_tls_cov = sparse_tls_cov.fitted_admittance_matrix
-    estimated_voltage = sparse_tls_cov.estimated_variables
-    estimated_current = sparse_tls_cov.estimated_measurements
     sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
     print(sparse_tls_cov_metrics)
 
@@ -595,7 +460,7 @@ if max_iterations > 0:
 
     print("Saving final result...")
     sim_STLS = {'y': y_sparse_tls_cov, 'e': sparse_tls_cov_errors.to_numpy(),
-                't': sparse_tls_cov_targets.to_numpy(), 'v': estimated_voltage, 'i': estimated_current}
+                't': sparse_tls_cov_targets.to_numpy()}
     np.savez(DATA_DIR / ("simulations_output/final_results_" + str(nodes) + ".npz"), **sim_STLS)
     print("Done!")
 
@@ -606,8 +471,6 @@ sim_STLS = np.load(DATA_DIR / ("simulations_output/final_results_" + str(nodes) 
 y_sparse_tls_cov = sim_STLS["y"]
 sparse_tls_cov_errors = pd.Series(sim_STLS["e"])
 sparse_tls_cov_targets = pd.Series(sim_STLS["t"])
-estimated_voltage = sim_STLS["v"]
-estimated_current = sim_STLS["i"]
 print("Done!")
 
 sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
@@ -645,141 +508,3 @@ with open(DATA_DIR / 'sparsity_metrics.txt', 'w') as f:
     print("MLE", file=f)
     print(error_metrics(2*y_comp[np.invert(y_comp_idx), 3], 2*y_comp[np.invert(y_comp_idx), 4]), file=f)
 # %%
-
-# Error covariance of result
-"""
-# What follows is not yet on the program.
-"""
-# %%
-
-exit(0)
-
-if redo_covariance:
-    print("Calculating data covariance matrices...")
-    sigma_voltage = average_true_noise_covariance(noisy_voltage, voltage_magnitude_sd, phase_sd, False)
-    sigma_current = average_true_noise_covariance(noisy_current, current_magnitude_sd * pmu_ratings, phase_sd, False)
-    print("Done!")
-
-    print("Calculating fisher info...")
-    real_F = sparse_tls_cov.fisher_info(voltage - np.mean(voltage, axis=0),
-                                        current - np.mean(current, axis=0),
-                                        sigma_voltage, sigma_current, y_bus)
-    estimated_F = sparse_tls_cov.fisher_info(estimated_voltage - np.mean(estimated_voltage, axis=0),
-                                             estimated_current - np.mean(estimated_current, axis=0),
-                                             sigma_voltage, sigma_current, y_sparse_tls_cov)
-    print("Done!")
-
-    print("Saving fisher matrices...")
-    sim_fis = {'r': real_F, 'e': estimated_F}
-    np.savez(DATA_DIR / ("simulations_output/fisher_" + str(nodes) + ".npz"), **sim_fis)
-    print("Done!")
-
-    print("Loading fisher matrices...")
-    sim_fis = np.load(DATA_DIR / ("simulations_output/fisher_" + str(nodes) + ".npz"))
-    real_F = sim_fis["r"]
-    estimated_F = sim_fis["e"]
-    print("Done!")
-
-    print("Calculating error covariance...")
-    real_y_bias, real_y_cov = sparse_tls_cov.bias_and_variance(voltage - np.mean(voltage, axis=0),
-                                                               current - np.mean(current, axis=0),
-                                                               sigma_voltage, sigma_current, y_bus,
-                                                               sparse.csc_matrix(real_F))
-    estimated_y_bias, estimated_y_cov = sparse_tls_cov.bias_and_variance(estimated_voltage - np.mean(estimated_voltage, axis=0),
-                                                                         estimated_current - np.mean(estimated_current, axis=0),
-                                                                         sigma_voltage, sigma_current, y_sparse_tls_cov,
-                                                                         sparse.csc_matrix(estimated_F))
-    print("Done!")
-
-    print("Saving covariance matrices...")
-    sim_cov = {'r': real_y_cov, 'e': estimated_y_cov, 'a': real_y_bias, 'b': estimated_y_bias}
-    np.savez(DATA_DIR / ("simulations_output/covariance_" + str(nodes) + ".npz"), **sim_cov)
-    print("Done!")
-
-print("Loading fisher matrices...")
-sim_fis = np.load(DATA_DIR / ("simulations_output/fisher_" + str(nodes) + ".npz"))
-real_F = sim_fis["r"]
-estimated_F = sim_fis["e"]
-print("Done!")
-
-print("Loading covariance matrices...")
-sim_cov = np.load(DATA_DIR / ("simulations_output/covariance_" + str(nodes) + ".npz"))
-real_y_cov = sim_cov["r"]
-estimated_y_cov = sim_cov["e"]
-real_y_bias = sim_cov["a"]
-estimated_y_bias = sim_cov["b"]
-print("Done!")
-
-y_error_fis = unvectorize_matrix(DT @ np.sqrt(np.abs(make_complex_vector(np.diag(real_F)))),
-                                 y_sparse_tls_cov.shape)
-y_error_fis[:, -1] = 0
-y_error_fis[-1, :] = 0
-y_error_fis[:, 0] = 0
-y_error_fis[0, :] = 0
-plot_heatmap(undel_kron(np.tril(np.abs(np.abs(y_error_fis)), -1) + np.tril(np.abs(np.abs(y_error_fis)), -1).T,
-                        idx_todel), "error_fis")
-
-y_error_std = unvectorize_matrix(DT @ np.sqrt(np.abs(make_complex_vector(np.diag(estimated_y_cov)))),
-                                 y_sparse_tls_cov.shape)
-print(np.mean(np.abs(y_error_std)))
-cov_metrics = error_metrics(real_y_cov, estimated_y_cov)
-print(cov_metrics)
-plot_heatmap(undel_kron(np.tril(np.abs(np.abs(y_error_std)), -1) + np.tril(np.abs(np.abs(y_error_std)), -1).T,
-                        idx_todel), "error_std")
-
-#sns_plot = sns.heatmap(estimated_y_cov)
-#fig_stc = sns_plot.get_figure()
-#fig_stc.savefig(DATA_DIR / "est_cov.png")
-#plt.clf()
-
-exit(0)
-
-# %%
-
-print("Inverting covariance matrix...")
-nn = newnodes * (newnodes-1)
-F_val = sp.stats.f.ppf(0.95, nn, newnodes*steps - nn) * newnodes*steps / (newnodes*steps - nn)
-y_cov = real_y_cov # estimated_y_cov
-inv_y_cov = sparse.linalg.inv(sparse.csc_matrix(y_cov))
-
-#sns_plot = sns.heatmap(np.log(np.abs(inv_y_cov.toarray())).clip(min=0))
-var_tmp = unvectorize_matrix(DT @ make_complex_vector(np.linalg.eig(estimated_y_cov)[0]), y_tls.shape)
-var_tmp = var_tmp[:newnodes-1, :newnodes-1]
-sns_plot = sns.heatmap(np.abs(np.abs(var_tmp)))
-fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "tmp.png")
-plt.clf()
-print("Done!")
-
-print("Checking confidence intervals with F = " + str(F_val) + "...")
-y_thresholded = y_sparse_tls_cov
-y_vect = elimination_matrix(newnodes) @ vectorize_matrix(y_sparse_tls_cov.copy())
-dthr, mthr = 1e-9, 1e-9
-vals = []
-
-val, thr = 0, 0
-y_fin = y_vect.copy()
-with tqdm(total=int(mthr/dthr)+1) as pbar:
-    while val < F_val*2000:
-        y_fin[np.abs(y_fin) < thr*thr_scale] = 0j
-        thr = thr + dthr
-        if thr >= mthr:
-            break
-
-        y_test = y_vect.copy()
-        y_test[np.abs(y_test) < thr*thr_scale] = 0j
-        y_test = make_real_vector(y_vect - y_test)
-
-        val = y_test.dot(inv_y_cov.dot(y_test))
-        vals.append(val)
-        pbar.update(1)
-
-print("Done!")
-y_error_cov = unvectorize_matrix(np.abs(DT @ y_fin), y_sparse_tls_cov.shape)
-
-#print(vals)
-
-sns_plot = sns.heatmap(np.abs(np.tril(y_error_cov, -1)))
-fig_stc = sns_plot.get_figure()
-fig_stc.savefig(DATA_DIR / "y_cov.png")
-plt.clf()

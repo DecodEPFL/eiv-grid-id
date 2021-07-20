@@ -11,7 +11,6 @@ import seaborn as sns
 from tqdm import tqdm
 
 from scipy import sparse
-from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 
 # %%
@@ -32,14 +31,17 @@ from src.models.matrix_operations import make_real_vector, vectorize_matrix, dup
                                          elimination_sym_matrix, undelete
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
 from src.models.regression import ComplexRegression, BayesianRegression
-from src.models.error_in_variable import TotalLeastSquares, SparseTotalLeastSquare
-from src.simulation.load_profile import generate_gaussian_load, load_profile_from_csv
+from src.models.error_in_variable import TotalLeastSquares
+from src.models.smooth_prior import SparseSmoothPrior
+from src.simulation.load_profile import load_profile_from_numpy
 from src.simulation.simulation_3ph import SimulatedNet3P
 from src.simulation.net_templates_3ph import cigre_mv_feeder3_bus, cigre_mv_feeder3_net, ieee123_types
-from src.identification.error_metrics import error_metrics, fro_error, rrms_error
-from src.models.noise_transformation import average_true_noise_covariance, exact_noise_covariance
+from src.models.error_metrics import error_metrics, rrms_error
+from src.models.noise_transformation import average_true_noise_covariance
 from src.models.smooth_prior import SmoothPrior
+from src.simulation import run3ph
 from conf.conf import DATA_DIR
+from conf import conf
 from src.models.utils import plot_heatmap, plot_scatter, plot_series
 
 
@@ -59,7 +61,7 @@ def undel_kron(m, idx):
 
 # %%
 
-P_PROFILE = "Electricity_Profile_RNEplus.csv"
+P_PROFILE = "Electricity_Profile_RNEplus.npy"
 
 """
 bus_data = bolognani_bus56
@@ -80,7 +82,6 @@ use_laplacian = True
 
 # %%
 
-net = SimulatedNet3P(ieee123_types, bus_data, net_data)
 nodes = len(bus_data)
 
 selected_weeks = np.array([12])
@@ -95,104 +96,37 @@ fmeas = 100 # [Hz] # 50
 max_plot_y = 3000#18000
 max_plot_err = 500#5000
 
-np.random.seed(11)
-
 # %%
 
-redo_loads = True
-redo_netsim = True
-redo_noise = True
+redo_loads = False
+redo_netsim = False
+redo_noise = False
 redo_standard_methods = True
 redo_STLS = False
 max_iterations = 0
 redo_covariance = False
 
-# %% md
-
-# PMU ratings
-"""
-# Defining ratings for the PMU to estimate noise levels.
-# Assuming each PMU is dimensioned properly for its node,
-# we use $\frac{|S|}{|V_{\text{rated}}|}$ as rated current.
-# Voltages being normalized, it simply becomes $|S|$.
-"""
-# %%
-
-pmu_safety_factor = np.array([4, 4, 4])
-pmu_ratings = np.array([pmu_safety_factor*np.sqrt(np.max(i.Pd)**2 + np.max(i.Qd)**2) for i in bus_data])
-pmu_ratings = pmu_ratings.reshape((3*nodes,))
+use_equivalent_noise = True
 
 # %% md
 
-# Load profiles
-"""
-# Getting profiles as PQ loads every minute for 365 days for 1000 households.
-# Summing up random households until nominal power of the Bus is reached.
-"""
-# %%
+net = run3ph.make_net("Cigre3P", ieee123_types, cigre_mv_feeder3_bus, cigre_mv_feeder3_net)
+nodes = len(net.bus.index)
 
-if redo_loads:
-    times = np.array(range(days * 24 * 60)) * 60  # [s]
+load_p, load_q, load_asym, times = run3ph.generate_loads(net, (DATA_DIR / str("profiles/" + P_PROFILE),
+                                                               DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
+                                                               selected_weeks,
+                                                               days, []) if redo_loads else None, verbose=True)
 
-    print("Reading standard profiles...")
-    print("Symmetric loads")
-    load_p, load_q = load_profile_from_csv(active_file=DATA_DIR / str("profiles/" + P_PROFILE),
-                                           reactive_file=DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
-                                           skip_header=selected_weeks*7*24*60,
-                                           skip_footer=np.array(365*24*60 - selected_weeks*7*24*60
-                                                              - days/len(selected_weeks)*24*60, dtype=np.int64),
-                                           load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
-                                                                      for i in range(len(net.load.p_mw))]),
-                                           load_q_reference = np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
-                                                                        for i in range(len(net.load.q_mvar))]),
-                                           load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None, verbose=True
-                                           )
-
-    print("Asymmetric loads")
-    load_asym = load_profile_from_csv(active_file=DATA_DIR / str("profiles/" + P_PROFILE),
-                                      reactive_file=DATA_DIR / str("profiles/Reactive_" + P_PROFILE),
-                                      skip_header=selected_weeks*7*24*60,
-                                      skip_footer=np.array(365*24*60 - selected_weeks*7*24*60
-                                                         - days/len(selected_weeks)*24*60, dtype=np.int64),
-                                      load_p_reference=np.array(
-                                          [net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
-                                           for i in range(len(net.asymmetric_load.p_a_mw))]),
-                                      load_q_reference = np.array(
-                                          [net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
-                                           for i in range(len(net.asymmetric_load.q_a_mvar))]),
-                                      load_p_rb = np.array(
-                                          [net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
-                                           for i in range(len(net.asymmetric_load.p_b_mw))]),
-                                      load_q_rb = np.array(
-                                          [net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
-                                           for i in range(len(net.asymmetric_load.q_b_mvar))]),
-                                      load_p_rc = np.array(
-                                          [net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
-                                           for i in range(len(net.asymmetric_load.p_c_mw))]),
-                                      load_q_rc = np.array(
-                                          [net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
-                                           for i in range(len(net.asymmetric_load.q_c_mvar))]),
-                                      verbose = True
-                                      )
-    print("Done!")
-
-    print("Saving loads...")
-    sim_PQ = {'p': load_p, 'q': load_q, 'a': load_asym, 't': times}
-    np.savez(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"), **sim_PQ)
-    print("Done!")
-
-print("Loading loads...")
-sim_PQ = np.load(DATA_DIR / ("simulations_output/sim_loads_" + str(nodes) + ".npz"))
-load_p, load_q, load_asym, times = sim_PQ["p"], sim_PQ["q"], sim_PQ["a"], sim_PQ["t"]
-print("Done!")
+# %% md
 
 # %%
 
-#plot_series(load_p[180:60*24+180, np.r_[0:6, 7:11]], 'loads', s=1, ar=2000,
-#            colormap=['grey', 'grey', 'grey', 'black', 'grey', 'grey', 'grey', 'grey', 'grey', 'grey'])
-plot_series(load_p[180:60*24+180, :], 'loads', s=1, ar=500,
-           colormap=['grey', 'grey', 'grey', 'grey', 'grey',
-                     'grey', 'grey', 'grey', 'black', 'grey'])
+# plot_series(load_p[180:60*24+180, np.r_[0:6, 7:11]], 'loads', s=1, ar=2000,
+#             colormap=['grey', 'grey', 'grey', 'black', 'grey', 'grey', 'grey', 'grey', 'grey', 'grey'])
+# plot_series(load_p[180:60*24+180, :], 'loads', s=1, ar=500,
+#            colormap=['grey', 'grey', 'grey', 'grey', 'grey',
+#                      'grey', 'grey', 'grey', 'black', 'grey'])
 
 # %% md
 
@@ -202,23 +136,7 @@ plot_series(load_p[180:60*24+180, :], 'loads', s=1, ar=500,
 """
 # %%
 
-if redo_netsim:
-    print("Simulating network...")
-    y_bus = net.make_y_bus()
-    voltage, current = net.run(load_p, load_q, load_asym).get_current_and_voltage()
-    print("Done!")
-
-    print("Saving data...")
-    sim_IV = {'i': current, 'v': voltage, 'y': y_bus, 't': times}
-    np.savez(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"), **sim_IV)
-    print("Done!")
-
-# %%
-
-print("Loading data...")
-sim_IV = np.load(DATA_DIR / ("simulations_output/sim_results_" + str(nodes) + ".npz"))
-voltage, current, y_bus, times = sim_IV["v"], sim_IV["i"], sim_IV["y"], sim_IV["t"]
-print("Done!")
+voltage, current, y_bus = run3ph.simulate_net(net, load_p if redo_netsim else None, load_q, load_asym, verbose=True)
 
 # %% md
 
@@ -236,33 +154,11 @@ print("Done!")
 """
 # %%
 
-ts = np.linspace(0, np.max(times), round(np.max(times)*fmeas))
-fparam = int(np.floor(ts.size/steps))
-if redo_noise:
-    print("Adding noise and filtering...")
-
-    noisy_voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                    std_m=voltage_magnitude_sd, std_p=phase_sd,
-                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
-    noisy_current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                    std_m=current_magnitude_sd * pmu_ratings, std_p=phase_sd,
-                                                    noise_fcn=add_polar_noise_to_measurement, verbose=True)
-
-    voltage = filter_and_resample_measurement(voltage, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
-    current = filter_and_resample_measurement(current, oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                              std_m=None, std_p=None, noise_fcn=None, verbose=True)
-    print("Done!")
-
-    print("Saving filtered data...")
-    sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'j': current, 'w': voltage, 'y': y_bus}
-    np.savez(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"), **sim_IV)
-    print("Done!")
-
-print("Loading filtered data...")
-sim_IV = np.load(DATA_DIR / ("simulations_output/filtered_results_" + str(nodes) + ".npz"))
-noisy_voltage, noisy_current, voltage, current, y_bus = sim_IV["v"], sim_IV["i"], sim_IV["w"], sim_IV["j"], sim_IV["y"]
-print("Done!")
+noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam = \
+    run3ph.add_noise_and_filter(net, voltage, current, times, fmeas, steps,
+                                (voltage_magnitude_sd, current_magnitude_sd, phase_sd,
+                                 use_equivalent_noise, np.array([4, 4, 4])) if redo_noise else None,
+                                verbose=True)
 
 # %% md
 
@@ -385,25 +281,31 @@ if redo_standard_methods:
     """"""
     abs_tol = 1e-20
     rel_tol = 1e-20
-    lasso = BayesianRegression(lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=10)
 
-    if True:#max_iterations > 0:
-        # Create various priors, try with tls !!
-        y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_tls), (newnodes, newnodes))
-        tls_weights_adaptive = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
+    # Create adaptive Lasso penalty
+    y_sym_ols = unvectorize_matrix(DT @ E @ vectorize_matrix(y_ols), (newnodes, newnodes))
+    adaptive_lasso = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
+    prior = SparseSmoothPrior(smoothness_param=0.00001, n=len(E @ vectorize_matrix(y_tls))*2)
+    prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
 
+    if use_laplacian:
+        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=2,
+                                   dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
+                                   e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
+    else:
+        lasso = BayesianRegression(prior, lambda_value=1e-7, abs_tol=abs_tol, rel_tol=rel_tol, max_iterations=2,
+                                   dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
+
+    if max_iterations > 0:
         # Get or create starting data
         y_lasso = y_sym_ols.copy()
 
         print("Lasso identification...")
-        lasso.num_stability_param = 0.00001
-
-        # Adaptive weights
-        lasso.set_prior(SparseTotalLeastSquare.LAPLACE, None, np.diag(tls_weights_adaptive))
-
-        #lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
-        #y_lasso = lasso.fitted_admittance_matrix
+        lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
+        y_lasso = lasso.fitted_admittance_matrix
         print("Done!")
+    else:
+        y_lasso = y_ols
 
 
     print("Saving standard results...")
