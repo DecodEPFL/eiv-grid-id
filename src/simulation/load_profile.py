@@ -64,7 +64,6 @@ def generate_gaussian_load(
     :param load_q_rc: nominal values of reactive loads of phase 3
     :return: tuple of n_samples-by-n matrices of random loads for n nominal ones, as numpy arrays.
     """
-    np.random.seed(11)
     n_load = len(load_p_reference)
     if load_p_rb is None or load_q_rb is None or load_p_rc is None or load_q_rc is None:
         load_p = np.random.normal(load_p_reference, load_p_reference * load_sd, (n_samples, n_load))
@@ -100,24 +99,122 @@ def load_profile_from_csv(
     :param load_q_rc: nominal values of reactive loads of phase 3
     :return: tuple of n_samples-by-n matrices of random loads for n nominal ones, as numpy arrays.
     """
-    np.random.seed(11)
     n_load = len(load_p_reference)
     pload_profile = None
     qload_profile = None
 
     pbar = tqdm if verbose else (lambda x: x)
     if verbose:
-        print("Reading csv file...")
+        print("Reading csv files...")
 
     for i in pbar(range(len(skip_header))):
         pl = pd.read_csv(active_file, sep=';', header=None, engine='python',
                            skiprows=skip_header[i], skipfooter=skip_footer[i]).to_numpy()
         pload_profile = pl if pload_profile is None else np.vstack((pload_profile, pl))
 
-    for i in pbar(range(len(skip_header))):
         ql = pd.read_csv(reactive_file, sep=';', header=None, engine='python',
                            skiprows=skip_header[i], skipfooter=skip_footer[i]).to_numpy()
         qload_profile = ql if qload_profile is None else np.vstack((qload_profile, ql))
+
+    if verbose:
+        print("Done!")
+
+    pload_profile = pload_profile/1e6 # [MW]
+    qload_profile = qload_profile/1e6 # [MVA]
+    p_mean_percentile = np.mean(np.percentile(np.abs(pload_profile), 90, axis=0))
+    q_mean_percentile = np.mean(np.percentile(np.abs(qload_profile), 90, axis=0))
+    if verbose:
+        print("90th percentiles for P and Q:")
+        print(p_mean_percentile*1e6, " [W] ", q_mean_percentile*1e6, " [VAR]")
+
+    if verbose:
+        print("Assigning random households to nodes...")
+
+    if load_p_rb is None or load_q_rb is None or load_p_rc is None or load_q_rc is None:
+        load_p = np.zeros((pload_profile.shape[0], n_load))
+        load_q = np.zeros((qload_profile.shape[0], n_load))
+
+        for i in pbar(range(n_load)):
+            load_p[:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
+                                                                     size=round(load_p_reference[i]
+                                                                                / p_mean_percentile))], axis=1)
+            load_q[:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
+                                                                     size=round(load_q_reference[i]
+                                                                                / q_mean_percentile))], axis=1)
+
+        if verbose:
+            print("Done!")
+        return load_p, load_q
+
+    else:
+        load_asym = (np.zeros((pload_profile.shape[0], n_load)),
+                     np.zeros((pload_profile.shape[0], n_load)),
+                     np.zeros((pload_profile.shape[0], n_load)),
+                     np.zeros((qload_profile.shape[0], n_load)),
+                     np.zeros((qload_profile.shape[0], n_load)),
+                     np.zeros((qload_profile.shape[0], n_load))
+                     )
+        for i in pbar(range(n_load)):
+            load_asym[0][:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
+                                                                           size=round(load_p_reference[i]
+                                                                                      / p_mean_percentile))], axis=1)
+            load_asym[1][:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
+                                                                           size=round(load_p_rb[i]
+                                                                                      / p_mean_percentile))], axis=1)
+            load_asym[2][:, i] = np.sum(pload_profile[:, np.random.randint(pload_profile.shape[1],
+                                                                           size=round(load_p_rc[i]
+                                                                                      / p_mean_percentile))], axis=1)
+
+            load_asym[3][:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
+                                                                           size=round(load_q_reference[i]
+                                                                                      / q_mean_percentile))], axis=1)
+            load_asym[4][:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
+                                                                           size=round(load_q_rb[i]
+                                                                                      / q_mean_percentile))], axis=1)
+            load_asym[5][:, i] = np.sum(qload_profile[:, np.random.randint(qload_profile.shape[1],
+                                                                           size=round(load_q_rc[i]
+                                                                                      / q_mean_percentile))], axis=1)
+
+        if verbose:
+            print("Done!")
+        return load_asym
+
+
+def load_profile_from_numpy(
+        active_file: str, reactive_file: str, skip_header: np.array, skip_footer: np.array,
+        load_p_reference: np.array, load_q_reference: np.array,
+        load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None, verbose=False):
+    """
+    Read households load profiles from lines in a csv file
+    and assigns households randomly to nodes until nominal power is reached
+
+    :param active_file: file for active powers
+    :param reactive_file: file for reactive powers
+    :param skip_header: number of lines to skip at the beginning of the file
+    :param skip_footer: number of lines to skip at the end of the file
+    :param load_p_reference: nominal values of active loads
+    :param load_q_reference: nominal values of reactive loads
+    :param load_p_rb: nominal values of active loads of phase 2
+    :param load_q_rb: nominal values of reactive loads of phase 2
+    :param load_p_rc: nominal values of active loads of phase 3
+    :param load_q_rc: nominal values of reactive loads of phase 3
+    :return: tuple of n_samples-by-n matrices of random loads for n nominal ones, as numpy arrays.
+    """
+    n_load = len(load_p_reference)
+    pl = np.load(active_file, mmap_mode='r')
+    ql = np.load(reactive_file, mmap_mode='r')
+    pload_profile = np.zeros((0, pl.shape[1]))
+    qload_profile = np.zeros((0, ql.shape[1]))
+
+    pbar = tqdm if verbose else (lambda x: x)
+    if verbose:
+        print("Reading npy files...")
+
+    for i in pbar(range(len(skip_header))):
+        pload_profile = pl[skip_header[i]:pl.shape[0]-skip_footer[i]] if pload_profile is None else\
+            np.vstack((pload_profile, pl[skip_header[i]:pl.shape[0]-skip_footer[i]]))
+        qload_profile = ql[skip_header[i]:pl.shape[0]-skip_footer[i]] if qload_profile is None else \
+            np.vstack((qload_profile, ql[skip_header[i]:pl.shape[0]-skip_footer[i]]))
 
     if verbose:
         print("Done!")

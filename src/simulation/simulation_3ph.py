@@ -52,7 +52,7 @@ class SimulationResult3P(object):
 
 class SimulatedNet3P(NetData3P):
 
-    def __init__(self, ts: dict, ns: list = [], ls: list = [], other=pp.create_empty_network("net")):
+    def __init__(self, ts: dict, ns: list=None, ls: list=None, other=None):
         NetData3P.__init__(self, ts, ns, ls, other)
 
         self.sim_result = None

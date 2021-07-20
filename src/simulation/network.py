@@ -1,5 +1,6 @@
 import numpy as np
 import pandapower as pp
+
 from src.simulation.abstract_network import Net, ext_sc_carac
 
 """
@@ -14,8 +15,11 @@ class NetData(Net):
     Implements PandaPower network creation from custom data.
     """
 
-    def __init__(self, ns: list = [], ls: list = [], other=pp.create_empty_network("net")):
+    def __init__(self, ns: list=None, ls: list=None, other=None):
         Net.__init__(self, other)
+        ns = [] if ns is None else ns
+        ls = [] if ns is None else ls
+
         self.create_buses(ns)
         self.create_lines(ls)
 
@@ -33,9 +37,9 @@ class NetData(Net):
         :return: self network for chained calls
         """
         bus = pp.create_bus(self, kv, name=str(i), index=i)
-        if t == 1:
+        if t == Net.TYPE_LOAD:
             pp.create_load(self, bus, p, q, name="(" + str(i) + ")", index=i, const_z_percent=Z, const_i_percent=I)
-        elif t == 3:
+        elif t == Net.TYPE_PCC:
             pp.create_load(self, bus, 0, 0, name="(" + str(i) + ")", index=i)
             pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['mva'], rx_max=ext_sc_carac['rx'],
                                r0x0_max=ext_sc_carac['r0x0'], x0x_max=ext_sc_carac['x0x'], max_p_mw=p, max_q_mvar=q)

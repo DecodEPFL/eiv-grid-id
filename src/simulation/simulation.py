@@ -45,7 +45,7 @@ class SimulationResult(object):
 
 class SimulatedNet(NetData):
 
-    def __init__(self, ns: list = [], ls: list = [], other=pp.create_empty_network("net")):
+    def __init__(self, ns: list = None, ls: list = None, other=None):
         NetData.__init__(self, ns, ls, other)
 
         self.sim_result = None

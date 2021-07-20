@@ -1,7 +1,7 @@
 import numpy as np
 from pytest import fixture
 
-from src.identification.error_metrics import fro_error, max_error, rrms_error, map_error, error_metrics
+from src.models.error_metrics import fro_error, max_error, rrms_error, map_error, error_metrics
 
 
 @fixture

@@ -1,8 +1,4 @@
 import numpy as np
-import pandapower as pp
-import pandas as pd
-from pandapower.control import ConstControl
-from pandapower.timeseries import DFData
 
 from src.simulation.load_profile import BusData
 from src.simulation.lines import LineData
@@ -39,17 +35,17 @@ cigre_mv_feeder3_net = \
      LineData(9, 2, 2*0.49, "UG3")]
 
 test_3phase_bus = \
-    [BusData(1, 1, (0.04, 0.04, 0.04), (0.04, 0.04, 0.04), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),#(0.04, 0.02, 0.02), (0.01, 0.02, 0.01)
+    [BusData(1, 1, (0.04, 0.02, 0.02), (0.01, 0.02, 0.01), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
      BusData(2, 1, (0.08, 0.08, 0.08), (0.02, 0.02, 0.02), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
-     ##BusData(3, 1, (0.08, 0, 0), (0.04, 0, 0), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
-     #BusData(4, 1, (0, 0.12, 0), (0, 0.08, 0), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
+     BusData(3, 1, (0.08, 0, 0), (0.04, 0, 0), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
+     BusData(4, 1, (0, 0.12, 0), (0, 0.08, 0), 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8),
      BusData(5, 3, 10.00000, 10.00000, 0.000, 0.000, 1, 1, 0, 4.16, 1, 1.2, 0.8)]
 
 test_3phase_net = \
     [LineData(5, 1, 0.4, "OG3"),
-     LineData(1, 2, 0.2, "OG3")]#,
-     #LineData(2, 3, 0.2, "OG3"),
-     #LineData(2, 4, 0.2, "OG3")]
+     LineData(1, 2, 0.2, "OG3"),
+     LineData(2, 3, 0.2, "OG3"),
+     LineData(2, 4, 0.2, "OG3")]
 
 
 """

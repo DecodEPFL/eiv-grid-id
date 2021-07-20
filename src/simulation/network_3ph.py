@@ -18,8 +18,11 @@ class NetData3P(Net):
     Implements PandaPower network creation from custom data.
     """
 
-    def __init__(self, ts: dict, ns: list = [], ls: list = [], other=pp.create_empty_network("net")):
+    def __init__(self, ts: dict, ns: list=None, ls: list=None, other=None):
         Net.__init__(self, other)
+
+        ns = [] if ns is None else ns
+        ls = [] if ls is None else ls
 
         for tn, t in ts.items():
             pp.create_std_type(self, t, tn, element='line')
@@ -43,13 +46,13 @@ class NetData3P(Net):
         :return: self network for chained calls
         """
         bus = pp.create_bus(self, kv, name=str(i), index=i)
-        if t == 1:
+        if t == Net.TYPE_LOAD:
             if np.isscalar(p):
                 pp.create_load(self, bus, p, q, name=str(i), index=i,
                                const_z_percent=Z, const_i_percent=I)
             else:
                 pp.create_asymmetric_load(self, bus, p[0], p[1], p[2], q[0], q[1], q[2], name=str(i), index=i)
-        elif t == 3:
+        elif t == Net.TYPE_PCC:
             assert(np.isscalar(p))
             pp.create_load(self, bus, 0, 0, name=str(i), index=i)
             pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['mva'], rx_max=ext_sc_carac['rx'],

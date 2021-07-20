@@ -6,13 +6,12 @@ from scipy import sparse
 from scipy.linalg import pinv
 from tqdm import tqdm
 
-from src.identification.error_metrics import fro_error
+from src.models.error_metrics import fro_error
 from src.models.abstract_models import GridIdentificationModel, CVTrialResult, UnweightedModel, \
     CVModel, IterationStatus
 from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
     unvectorize_matrix, duplication_matrix, transformation_matrix, elimination_sym_matrix, elimination_lap_matrix
 from src.models.utils import DEFAULT_SOLVER, _solve_problem_with_solver
-from src.models.utils import _solve_lme
 
 """
     Classes implementing ordinary least squares type regressions
@@ -169,8 +168,6 @@ class BayesianRegression(GridIdentificationModel):
         b = make_real_vector(vectorize_matrix(z))
         AmdA = sparse.csr_matrix(A)
 
-        l = self._lambda
-
         #Use covariances if provided but transform them into sparse
         z_weight = sparse.eye(2 * n * samples, format='csr')
 
@@ -180,30 +177,22 @@ class BayesianRegression(GridIdentificationModel):
         # start iterating
         for it in tqdm(range(self._max_iterations)):
             # Update y
-            iASA = (AmdA.T @ z_weight @ AmdA) + l * M
-            ASb_vec = AmdA.T @ z_weight @ b + l * mu
+            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * M
+            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * mu
 
-            y = _solve_lme(iASA.toarray(), ASb_vec)
+            y = sparse.linalg.spsolve(iASA, ASb_vec)
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
 
             M, mu, penalty = self.prior.log_distribution(y)
 
             # Update cost function
             db = b - (A - dA) @ y
-            target = db.dot(z_weight.dot(db)) + l * penalty
+            target = db.dot(z_weight.dot(db)) + self._lambda * penalty
             self._iterations.append(IterationStatus(it, y_mat, target))
-
-            # Update lambda if dual ascent
-            if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
-                if np.sum(np.abs(y)) < self.l1_target or l < 0:
-                    l = 0
 
             # Check stationarity
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
 
         # Save results
-        self.estimated_variables = unvectorize_matrix(make_complex_vector(a), (samples, n))
-        self.estimated_measurements = unvectorize_matrix(make_complex_vector(b - AmdA @ y), (samples, n))
         self._admittance_matrix = y_mat

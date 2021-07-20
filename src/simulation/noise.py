@@ -126,7 +126,8 @@ def filter_and_resample_measurement(actual_measurement, oldtimes=None, newtimes=
                                             std_p[i] if hasattr(std_p, '__iter__') else std_p)
 
         f = interp1d(oldtimes, actual_measurement[:, i], axis=0)
-        resampled = add_noise(f(newtimes))
+        tmp =f(newtimes)
+        resampled = add_noise(tmp)
 
         for t in range(steps):
             filtered[t, i] = np.sum(resampled[t*fparam:(t+1)*fparam]).copy()/fparam

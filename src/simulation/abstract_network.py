@@ -19,7 +19,12 @@ class Net(pp.pandapowerNet, ABC):
     Abstract class for a power network
     """
 
-    def __init__(self, other=pp.create_empty_network("net")):
+    TYPE_LOAD = 1
+    TYPE_GEN = 2  # TODO: implement this
+    TYPE_PCC = 3
+
+    def __init__(self, other=None):
+        other = pp.create_empty_network("net") if other is None else other
         pp.pandapowerNet.__init__(self, other)
 
     @abstractmethod

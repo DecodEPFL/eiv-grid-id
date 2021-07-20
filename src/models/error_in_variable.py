@@ -5,11 +5,19 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 from tqdm import tqdm
 
+from conf import conf
+if conf.GPU_AVAILABLE:
+    import cupy
+    import cupyx.scipy.sparse as cusparse
+    from cupyx.scipy.sparse.linalg import spsolve
+    from src.models.gpu_matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix,\
+        make_complex_vector, unvectorize_matrix
+else:
+    from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix,\
+        make_complex_vector, unvectorize_matrix
+
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel, IterationStatus
-from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix, duplication_matrix, transformation_matrix, elimination_sym_matrix, elimination_lap_matrix
-from src.models.utils import _solve_lme, cuspsolve
-from src.identification.error_metrics import fro_error
+from src.models.utils import _solve_lme
 
 """
     Classes implementing total least squares type regressions
@@ -87,7 +95,7 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
         return (np.abs(f_cur - f_prev) < self._abs_tol or np.abs(f_cur - f_prev) / np.abs(f_prev) < self._rel_tol) \
                 and f_prev >= f_cur
 
-    def fit(self, x: np.array, z: np.array, x_weight: np.array, z_weight: np.array, y_init: np.array):
+    def fit(self, x: np.array, z: np.array, x_weight: sparse.csr_matrix, z_weight: sparse.csr_matrix, y_init: np.array):
         """
         Maximizes the likelihood db.T Wb db + da.T Wa da + p(y), where p(y) is the prior likelihood of y.
 
@@ -98,81 +106,96 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
         :param y_init: initial guess of y
         """
         #Initialization of parameters
+        if conf.GPU_AVAILABLE:
+            sp = cusparse
+            cp = cupy
+
+            x = cp.array(x, dtype=cp.complex64)
+            z = cp.array(z, dtype=cp.complex64)
+            y_init = cp.array(y_init, dtype=cp.complex64)
+
+        else:
+            sp = sparse
+            cp = np
 
         #Copy data
         samples, n = x.shape
-        DT = sparse.csr_matrix(self._transformation_matrix(n))
-        E = sparse.csr_matrix(self._elimination_matrix(n))
+        DT = sp.csr_matrix(cp.array(self._transformation_matrix(n), dtype=cp.float32))
+        E = sp.csr_matrix(cp.array(self._elimination_matrix(n), dtype=cp.float32))
 
-        A = make_real_matrix(sparse.kron(sparse.eye(n), x, format='csr') @ DT)
+        A = make_real_matrix(sp.kron(sp.eye(n, dtype=cp.float32), x, format='csr') @ DT)
         y = make_real_vector(E @ vectorize_matrix(y_init))
         a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(z))
 
-        l = self._lambda
-
         #Use covariances if provided but transform them into sparse
         if x_weight is None or z_weight is None:
-            z_weight = sparse.eye(2 * n * samples, format='csr')
-            x_weight = sparse.eye(2 * n * samples, format='csr')
+            z_weight = sp.eye(2 * n * samples, format='csr', dtype=cp.float32)
+            x_weight = sp.eye(2 * n * samples, format='csr', dtype=cp.float32)
         else:
-            z_weight = sparse.csr_matrix(z_weight)
-            x_weight = sparse.csr_matrix(x_weight)
+            z_weight = sp.csr_matrix(z_weight, dtype=cp.float32)
+            x_weight = sp.csr_matrix(x_weight, dtype=cp.float32)
 
         y_mat = y_init
-        M, mu, penalty = self.prior.log_distribution(y)
+        M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
         # start iterating
         for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
             # Create \bar Y from y
-            real_beta_kron = sparse.kron(np.real(y_mat), sparse.eye(samples), format='csr')
-            imag_beta_kron = sparse.kron(np.imag(y_mat), sparse.eye(samples), format='csr')
-            underline_y = sparse.bmat([[real_beta_kron, -imag_beta_kron],
+            real_beta_kron = sp.kron(cp.real(y_mat), sp.eye(samples), format='csr')
+            imag_beta_kron = sp.kron(cp.imag(y_mat), sp.eye(samples), format='csr')
+            underline_y = sp.bmat([[real_beta_kron, -imag_beta_kron],
                                        [imag_beta_kron, real_beta_kron]], format='csr')
 
-            # Solve da from a linear equation
+            # Solve da from a linear equation (this is long)
             ysy = underline_y.T @ z_weight @ underline_y
-            sys_matrix = sparse.csr_matrix(ysy + x_weight)
+            sys_matrix = sp.csr_matrix(ysy + x_weight)
             sys_vector = ysy @ a - underline_y.T @ z_weight @ b
 
-            da = _solve_lme(sys_matrix, sys_vector).squeeze()
+            # Free useless stuff before heavy duties
+            del real_beta_kron
+            del imag_beta_kron
+            del underline_y
+            del ysy
+            if conf.GPU_AVAILABLE:
+                cp._default_memory_pool.free_all_blocks()
+
+            # Solve the Delta V sub-problem (this is long)
+            da = sp.linalg.spsolve(sys_matrix, sys_vector).squeeze()
 
             # Create dA from da
-            e_qp = sparse.csr_matrix(unvectorize_matrix(make_complex_vector(da), x.shape), dtype=np.cfloat)
-            dA = make_real_matrix(sparse.kron(sparse.eye(n), e_qp, format='csr') @ DT)
+            e_qp = sp.csr_matrix(unvectorize_matrix(make_complex_vector(da), x.shape), dtype=cp.complex64)
+            dA = make_real_matrix(sp.kron(sp.eye(n), e_qp, format='csr') @ DT)
 
             # Update y
-            AmdA = sparse.csr_matrix(A - dA)
+            AmdA = sp.csr_matrix(A - dA)
 
-            iASA = (AmdA.T @ z_weight @ AmdA) + l * M
-            ASb_vec = AmdA.T @ z_weight @ b + l * mu
+            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * sp.csr_matrix(M)
+            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * cp.array(mu)
 
-            y = _solve_lme(iASA.toarray(), ASb_vec)
+            y = sp.linalg.spsolve(iASA, ASb_vec).squeeze()
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
 
-            M, mu, penalty = self.prior.log_distribution(y)
-
+            M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
             # Update cost function
             db = (b - AmdA @ y).squeeze()
-            target = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da)) + l * penalty
-            self._iterations.append(IterationStatus(it, y_mat, target))
-
-            # Update lambda if dual ascent
-            if self.l1_target >= 0 and self.l1_multiplier_step_size > 0:
-                l = l + self.l1_multiplier_step_size * (np.sum(np.abs(y)) - self.l1_target)
-                if np.sum(np.abs(y)) < self.l1_target or l < 0:
-                    l = 0
+            cost = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da))
+            cost = cost.get() if conf.GPU_AVAILABLE else cost
+            target = cost + self._lambda * penalty
+            self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, target))
 
             # Check stationarity
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
 
         # Save results
-        self.estimated_variables = unvectorize_matrix(make_complex_vector(a), (samples, n))
-        self.estimated_measurements = unvectorize_matrix(make_complex_vector(b - AmdA @ y), (samples, n))
-        self._admittance_matrix = y_mat
+        if conf.GPU_AVAILABLE:
+            self._admittance_matrix = y_mat.get()
+        else:
+            self._admittance_matrix = y_mat
 
+""" TODO: rewrite this
     def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
         # Initialization of parameters
         samples, n = x.shape
@@ -252,4 +275,4 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
         bias = self._lambda * F @ (M @ y - 0*mu)
 
         return bias, cov.toarray()
-
+"""
