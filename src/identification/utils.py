@@ -13,9 +13,7 @@ import tikzplotlib
 DEFAULT_SOLVER = 'default'
 
 """
-    Wrapper functions to solve Optimization problems and linear systems
-
-    Also Added copy pasted code to solve systems with GPU using pyCuda
+    Various plotting and displaying functions
 
     Copyright @donelef, @jbrouill on GitHub
 """
@@ -140,13 +138,5 @@ def plot_series(m: np.array, name: str, labels=None, s=10, colormap='hsv', ar=No
     plt.clf()
 
 
-def _solve_problem_with_solver(problem: cvxpy.Problem, solver, verbose: bool, warm_start: bool = False):
-    if solver == DEFAULT_SOLVER:
-        problem.solve(verbose=verbose, warm_start=warm_start, qcp=True)
-    else:
-        problem.solve(solver=solver, verbose=verbose, warm_start=warm_start, qcp=True)
-
-
-def _solve_lme(mat: sp.csr_matrix, vec: np.ndarray):
-    return sp.linalg.spsolve(mat.tocsc(), vec)
-
+def colored(r, g, b, text):
+    return "\033[38;2;{};{};{}m{} \033[38;2;255;255;255m".format(r, g, b, text)

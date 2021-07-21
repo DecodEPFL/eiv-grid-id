@@ -17,7 +17,6 @@ else:
         make_complex_vector, unvectorize_matrix
 
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, MisfitWeightedModel, IterationStatus
-from src.models.utils import _solve_lme
 
 """
     Classes implementing total least squares type regressions

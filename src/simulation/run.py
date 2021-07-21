@@ -211,3 +211,55 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
         pprint("Done!")
 
     return noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam
+
+
+def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose=True):
+    """
+    # Hidden nodes and nodes with no load and are very hard to estimate.
+    # Kron reduction is a technique to obtain an equivalent graph without these nodes.
+    # This technique is used to remove them.
+    #
+    # These hidden nodes can be found again for a radial network,
+    # by transforming all the added ∆ sub-networks into Y ones.
+
+    :param net: SimulatedNet to make the loads for
+    :param voltage: voltage measurements (complex T-by-n array)
+    :param current: current measurements (complex T-by-n array)
+    :param hidden_nodes: loaded nodes to reduce (nodes with 0 loads will always also be reduced)
+    :param laplacian: is the admittance matrix a Laplacian?
+    :param verbose: verbose ON/OFF
+    """
+
+    if verbose:
+        def pprint(a):
+            print(a)
+    else:
+        pprint = lambda a: None
+
+    y_bus = net.make_y_bus()
+
+    pprint("Kron and sub-Kron reducing hidden nodes, PCC, and loads with no current...")
+    passive_idx = [net.bus.index.tolist().index(idx) for idx in net.give_passive_nodes()[0]]
+    hidden_idx = [net.bus.index.tolist().index(idx) for idx in hidden_nodes]
+    pcc_idx = [net.bus.index.tolist().index(idx) for idx in net.ext_grid.bus.values]
+    idx_todel = list(set(hidden_idx).union(passive_idx))
+    hidden_idx = [idx for idx in hidden_idx if idx not in pcc_idx]
+
+    # subKron reducing the ext_grid
+    if not laplacian:
+        y_bus = np.delete(np.delete(y_bus, pcc_idx, axis=1), pcc_idx, axis=0)
+
+        # Shift larger indices because y_bus gets smaller
+        for i in pcc_idx:
+            hidden_idx = [(idx - 1 if idx > i else idx) for idx in hidden_idx]
+            passive_idx = [(idx - 1 if idx > i else idx) for idx in passive_idx]
+
+    # Kron reduction of passive and hidden nodes
+    shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
+    shunts[hidden_idx] = np.divide(np.mean(current[:, hidden_idx], axis=0), np.mean(voltage[:, hidden_idx], axis=0))
+    y_bus = net.kron_reduction(list(set(hidden_idx).union(passive_idx).difference(pcc_idx)),
+                               y_bus + np.diag(shunts))
+    pprint("Done!")
+    pprint("reduced nodes: " + str(np.array(idx_todel) + 1))
+
+    return idx_todel, y_bus

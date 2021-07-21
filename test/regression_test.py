@@ -1,7 +1,8 @@
 import numpy as np
 from pytest import fixture
 
-from src.models.regression import ComplexRegression, ComplexLasso
+from src.models.regression import ComplexRegression, BayesianRegression
+from src.models.smooth_prior import SparseSmoothPrior
 
 
 @fixture
@@ -21,9 +22,13 @@ def test_complex_regression(model):
 
 def test_lasso_regression(model):
     x, y, beta = model
-    r = ComplexLasso(beta, verbose=False, lambdas=np.logspace(-6, 3, 50))
-    r.fit(x, y)
-    np.testing.assert_allclose([p.hyperparameters['lambda'] for p in r.cv_trials], np.logspace(-6, 3, 50))
-    np.testing.assert_allclose(r.cv_trials[0].fitted_parameters, beta, rtol=1e-6)
-    np.testing.assert_allclose(r.cv_trials[-1].fitted_parameters, np.zeros((2, 2)), rtol=0, atol=1e-7)
-    np.testing.assert_allclose(r.fitted_admittance_matrix, beta, rtol=1e-6)
+    prior = SparseSmoothPrior(smoothness_param=0.00001, n=beta.shape[0]*beta.shape[1]*2)
+    prior.add_sparsity_prior(np.arange(prior.n), None, SparseSmoothPrior.LAPLACE)
+
+    lasso = BayesianRegression(prior, lambda_value=0.3, max_iterations=10)
+    lasso.fit(x, y, np.eye(2))
+    np.testing.assert_allclose(lasso.fitted_admittance_matrix, beta, rtol=1e-2)
+
+    lasso = BayesianRegression(prior, lambda_value=500, max_iterations=10)
+    lasso.fit(x, y, np.eye(2))
+    np.testing.assert_allclose(lasso.fitted_admittance_matrix, np.zeros((2, 2)), rtol=0, atol=1e-2)

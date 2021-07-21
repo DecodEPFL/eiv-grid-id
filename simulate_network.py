@@ -39,13 +39,13 @@ def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
 
     bus_data = getattr(nets, str(network) + "_bus")
     line_data = getattr(nets, str(network) + "_net")
-    net = run3ph.make_net("bolognani56", ieee123_types, bus_data, line_data) if three_phased \
-        else run.make_net("bolognani56", bus_data, line_data)
+    net = run3ph.make_net(network, ieee123_types, bus_data, line_data) if three_phased \
+        else run.make_net(network, bus_data, line_data)
 
     # How to deal with hidden nodes
     hidden_nodes = conf.simulation.hidden_nodes
     constant_power_hidden_nodes = conf.simulation.constant_load_hidden_nodes or len(hidden_nodes) == 0
-    if not laplacian:
+    if not laplacian and not three_phased:
         for b in bus_data:
             if b.type == NetType.TYPE_PCC:
                 hidden_nodes.append(b.id)
@@ -88,6 +88,17 @@ def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
         noise_fcn(net, voltage, current, times, conf.simulation.measurement_frequency, conf.simulation.time_steps,
                   noise_params, verbose=verbose)
 
+    # Reducing network
+    idx_todel, y_bus = run3ph.reduce_network(net, voltage, current, hidden_nodes, laplacian) if three_phased \
+        else run.reduce_network(net, voltage, current, hidden_nodes, laplacian)
+
+    # Removing reduced nodes
+    noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
+    noisy_current = np.delete(noisy_current, idx_todel, axis=1)
+    voltage = np.delete(voltage, idx_todel, axis=1)
+    current = np.delete(current, idx_todel, axis=1)
+    pmu_ratings = np.delete(pmu_ratings, idx_todel)
+
     if verbose:
         print("Saving data...")
     sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'j': current, 'w': voltage,
@@ -96,8 +107,6 @@ def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
 
     if verbose:
         print("Dimulation done! Please find the results in data/simulation_output/" + net.name + ".npz")
-
-
 
 
 if __name__ == '__main__':

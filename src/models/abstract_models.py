@@ -25,12 +25,6 @@ class IterationStatus:
     target_function: float
 
 
-@dataclass
-class CVTrialResult:
-    hyperparameters: dict
-    fitted_parameters: np.array
-
-
 class UnweightedModel(ABC):
     @abstractmethod
     def fit(self, x: np.array, z: np.array):
@@ -59,21 +53,3 @@ class GridIdentificationModel(ABC):
     def fitted_admittance_matrix(self) -> np.array:
         return self._admittance_matrix
 
-
-class CVModel(ABC):
-
-    def __init__(self, true_admittance, metric_func):
-        super().__init__()
-        self._cv_trials = None
-        self._true_admittance = true_admittance
-        self._metric_func = metric_func
-
-    @property
-    def cv_trials(self) -> List[CVTrialResult]:
-        return self._cv_trials
-
-    @property
-    def best_trial(self) -> CVTrialResult:
-        index, _ = min(enumerate(self.cv_trials),
-                       key=lambda t: self._metric_func(self._true_admittance, t[1].fitted_parameters))
-        return self.cv_trials[index]

@@ -1,20 +1,35 @@
 # eiv-grid-id
-Distribution network identification via error-in-variable models.
+#### Distribution network identification via error-in-variable models.
 
 ## Getting started
-This project relies on Python via the [Anaconda](https://www.anaconda.com/products/individual) distribution.
-To get started, first download Anaconda. 
-
-Then, in the root folder of the repository, run:
+This project relies on Python 3.8 or above.
+To get started, first install python and pip.
+Make sure you are in the correct venv using
 ``` shell script
-conda env create -f environment.yml
-conda activate eiv-grid-id
+source venv/bin/activate
 ```
-It will create and activate a virtual environment with all the required packages.
+if python is installed in a virtual environment.
 
-You are now ready to check out the notebooks. To do so, run:
+Then, clone the repository and run the following in the root folder:
 ``` shell script
-jupyter lab
+pip install .
 ```
-and navigate to the `notebooks` folder. 
+It will install all the required packages.
+
+If you have the packages pycuda and cupy installed,
+you may benefit from GPU-accelerated computations.
+
+## Running the scripts
+The script simulate_network.py simulates a network based on P,Q load profiles. 
+The results are saved in data/simulation_output.
+The script identify_network.py executes several identification methods to estimate the parameters of a network based on
+the measurements in data/simulation_output/[NETWORK_NAME].npz. The script plot_results displays the results of
+identify_network.py in the data folder if they are available.
+
+The following commands provides details on exact parameters.
+``` shell script
+python simulate_network.py --help
+python identify_network.py --help
+python plot_results.py --help
+```
 
