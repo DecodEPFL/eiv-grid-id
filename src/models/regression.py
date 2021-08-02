@@ -111,8 +111,8 @@ class BayesianRegression(GridIdentificationModel):
         # start iterating
         for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
             # Update y
-            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * M
-            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * mu
+            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * M.T @ M
+            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * M.T @ mu
 
             y = sparse.linalg.spsolve(iASA, ASb_vec)
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))

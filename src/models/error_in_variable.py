@@ -42,7 +42,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         """
         n = x.shape[1]
         y_matrix = y.reshape((y.shape[0], 1)) if len(y.shape) == 1 else y.copy()
-        u, s, vh = np.linalg.svd(np.block([x, y_matrix]))
+        u, s, vh = np.linalg.svd(np.block([x, y_matrix]), full_matrices=False)
         v = vh.conj().T
         v_xy = v[:n, n:]
         v_yy = v[n:, n:]
@@ -169,8 +169,8 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
             # Update y
             AmdA = sp.csr_matrix(A - dA)
 
-            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * sp.csr_matrix(M)
-            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * cp.array(mu)
+            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * sp.csr_matrix(M.T @ M)
+            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * cp.array(M.T @ mu)
 
             y = sp.linalg.spsolve(iASA, ASb_vec).squeeze()
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
@@ -187,6 +187,69 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
             # Check stationarity
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
+
+        # Save results
+        if conf.GPU_AVAILABLE:
+            self._admittance_matrix = y_mat.get()
+        else:
+            self._admittance_matrix = y_mat
+
+    def fit_svd(self, x: np.array, z: np.array, y_init: np.array):
+        """
+        Maximizes the likelihood db.T Wb db + da.T Wa da + p(y), where p(y) is the prior likelihood of y.
+
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param y_init: initial guess of y
+        """
+        conf.GPU_AVAILABLE = False
+        # Initialization of parameters
+        if conf.GPU_AVAILABLE:
+            sp = cusparse
+            cp = cupy
+
+            x = cp.array(x, dtype=cp.complex64)
+            z = cp.array(z, dtype=cp.complex64)
+            y_init = cp.array(y_init, dtype=cp.complex64)
+
+        else:
+            sp = sparse
+            cp = np
+
+        # Copy data
+        samples, n = x.shape
+        y_mat = y_init
+
+        mats = [cp.hstack((x.copy(), z[:, i].copy().reshape((samples, 1)))) for i in range(n)]
+        priors = [(i, self.prior.copy()) for i in range(n)]
+        y = [y_init[:, i].copy() for i in range(n)]
+
+        def run_iteration(m, p, y, k):
+            M, mu, penalty = p[1].log_distribution(y.get() if conf.GPU_AVAILABLE else y, p[0])
+            C = cp.vstack((m, cp.array(self._lambda * np.hstack((M, np.expand_dims(mu, 1))))))
+
+            _, _, vh = cp.linalg.svd(m, full_matrices=False)
+            v = vh.T.conj()
+            return -(v[:-1, -1] / v[-1, -1]).squeeze()
+
+        # start iterating
+        for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
+
+            if conf.GPU_AVAILABLE:
+                device = cp.cuda.Device()
+                map_streams = [cp.cuda.stream.Stream() for i in range(n)]
+                for i, stream in enumerate(map_streams):
+                    with stream:
+                        y[i] = run_iteration(mats[i], priors[i], y[i], i)
+                device.synchronize()
+            else:
+                for i in range(n):
+                    y[i] = run_iteration(mats[i], priors[i], y[i], i)
+
+            for i in range(n):
+                y_mat[:, i] = y[i].copy()
+
+            self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, 0))
 
         # Save results
         if conf.GPU_AVAILABLE:

@@ -25,7 +25,7 @@ def build_lasso_prior(nodes, y_ols, E, DT):
     adaptive_lasso = np.divide(1.0, np.power(np.abs(make_real_vector(E @ vectorize_matrix(y_sym_ols))), 1.0))
 
     prior = SparseSmoothPrior(smoothness_param=0.00001, n=len(E @ vectorize_matrix(y_ols))*2)
-    prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
+    prior.add_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
     return prior
 
 def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
@@ -38,9 +38,6 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
     #
     # y_tls can also be used as a reference for the sum of all elements on a row/column of Y: contrast prior
     # To stay consistent with the adaptive Lasso weights, these sums are also normalized by |diag(y_tls)|
-    #
-    # Another prior inserts actual values for edges around nodes 2, 50 and 51, as well as the edge from 4->40
-    # It also includes a small regularization for the nodes belonging to the a chained network prior.
 
     :param n: size of parameter matrix
     :param lambdaprime: relative weight of the non-sparsity priors
@@ -63,9 +60,9 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
     idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((nodes, nodes))
                                                                         - np.eye(nodes))) > 0)[0]
 
-    prior.add_adaptive_sparsity_prior(indices=idx_offdiag,
-                                      values=np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls)))[idx_offdiag],
-                                      orders=SmoothPrior.LAPLACE)
+    prior.add_sparsity_prior(indices=idx_offdiag,
+                             weights=1.0 / (np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls)))[idx_offdiag]),
+                             orders=SmoothPrior.LAPLACE)
 
     # If laplacian or variant hidden nodes, the total value estimate from non-diagonal elements is not the best
     if use_tls_diag:  # = not constant_power_hidden_nodes or use_laplacian
@@ -86,23 +83,75 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
             - 2*np.eye(nodes)[:, i:i+1] @ np.eye(nodes)[i:i+1, :])) > 0)[0] for i in range(nodes)])))
 
         prior.add_contrast_prior(indices=idx_contrast,
-                                 values=values_contrast,
-                                 weights=lambdaprime * np.concatenate((-np.ones(nodes), np.ones(nodes))),
+                                 values=values_contrast.reshape((2*nodes, 1)),
+                                 weights=lambdaprime*np.concatenate((-np.ones(nodes), np.ones(nodes)))/values_contrast,
                                  orders=SmoothPrior.LAPLACE)
 
         if regularize_diag:
             idx_diag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.eye(nodes))) > 0)[0]
+            values_diag = np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls))))
 
             prior.add_exact_prior(indices=idx_diag,
-                                  values=np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls)))),
-                                  weights=lambdaprime,
+                                  values=values_diag.reshape((2*nodes, 1)),
+                                  weights=lambdaprime / values_diag,
                                   orders=SmoothPrior.LAPLACE)
 
     else:
         prior.add_contrast_prior(indices=np.vstack(tuple(np.split(idx_offdiag, 2))),
-                                 values=-np.sum(np.vstack(tuple(np.split(values_contrast, 2))), axis=1).squeeze(),
-                                 weights=lambdaprime*np.array([1, -1]),
+                                 values=np.sum(np.vstack(tuple(np.split(-values_contrast, 2))), axis=1),
+                                 weights=lambdaprime*np.array([1, -1]) /
+                                         np.sum(np.vstack(tuple(np.split(-values_contrast, 2))), axis=1).squeeze(),
                                  orders=SmoothPrior.LAPLACE)
+
+    return prior
+
+
+def build_multi_prior(nodes, lambdaprime, y_tls, laplacian=False,
+                      use_tls_diag=False, regularize_diag=False):
+    # Bayesian priors definition
+    """
+    # Generate a prior using the y_tls solution
+    # This prior can be defined as the following l1 regularization weights.
+    # w_{i->k} = lambda / y_tls_{i->k} for adaptive Lasso weights, for all i ≠ k
+    #
+    # y_tls can also be used as a reference for the sum of all elements on a row/column of Y: contrast prior
+    # To stay consistent with the adaptive Lasso weights, these sums are also normalized by |diag(y_tls)|
+    #
+    # This function generates a prior with the non-vectorized indices
+    # contrast_each_row is always True
+
+    :param n: size of parameter matrix
+    :param lambdaprime: relative weight of the non-sparsity priors
+    :param y_tls: unregularized parameter estimates
+    :param use_tls_diag: use the diagonal elements as regularizer, or estimates from signs
+    :param regularize_diag: regularize the diagonal element to tls values
+    """
+
+    # Make tls solution symmetric
+    y_sym_tls = (y_tls + y_tls.T)/2
+    y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
+
+    # Make base prior
+    prior = SmoothPrior(smoothness_param=(1+1j)*1e-8, n=nodes, m=nodes)
+
+    # Add lasso penalty, with or without diagonal elements
+    if regularize_diag:
+        prior.add_exact_prior(indices=np.arange(nodes),
+                              values=np.diag(np.diag(y_tls)),
+                              orders=SmoothPrior.GAUSS)
+    else:
+        prior.add_sparsity_prior(indices=np.arange(nodes),
+                                 orders=SmoothPrior.GAUSS)
+
+    # If laplacian or variant hidden nodes, the total value estimate from non-diagonal elements is not the best
+    values_contrast = np.diag(y_tls) if use_tls_diag else -np.sum(y_sym_tls_ns, axis=1)
+    values_contrast = values_contrast if laplacian else -values_contrast
+
+    # Indices of the real part of each rows stacked with the indices of the imaginary part of each row
+    prior.add_contrast_prior(indices=np.arange(nodes).reshape((nodes, 1)),
+                             values=values_contrast.reshape((nodes, 1)),
+                             weights=lambdaprime / (-np.real(values_contrast) + 1j*np.imag(values_contrast)),
+                             orders=SmoothPrior.GAUSS)
 
     return prior
 
@@ -166,6 +215,13 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
         tls = TotalLeastSquares()
         tls.fit(noisy_voltage, noisy_current)
         y_tls = tls.fitted_admittance_matrix
+        #from src.models.matrix_operations import make_real_matrix, make_real_vector, make_complex_vector
+        #make_real_matrix = lambda x: x
+        #make_real_vector = lambda x: x
+        #make_complex_vector = lambda x: x
+        #tls.fit(make_real_matrix(np.kron(np.eye(nodes, dtype=np.float32), noisy_voltage)),
+        #        make_real_vector(vectorize_matrix(noisy_current)), nodes)
+        #y_tls = unvectorize_matrix(make_complex_vector(tls.fitted_admittance_matrix), (nodes, nodes))
         pprint("Done!")
 
         # Adaptive Lasso
@@ -215,7 +271,7 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
 
 
 def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, laplacian=False, max_iterations=50, verbose=True):
+                 y_init, vectorized=True, laplacian=False, max_iterations=50, verbose=True):
     # L1 Regularized weighted TLS
     """
     # Computing the Maximum Likelihood Estimator,
@@ -232,6 +288,7 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     :param current_sd_polar: relative current noise standard deviation in polar coordinates (complex)
     :param pmu_ratings: current ratings of the measuring devices
     :param y_init: initial parameters estimate
+    :param vectorized: use the original measurement matrix V I and the multi-prior if False.
     :param laplacian: is the admittance matrix Laplacian?
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
@@ -247,29 +304,38 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     if laplacian:
         DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
         E = elimination_lap_matrix(nodes) @ elimination_sym_matrix(nodes)
-    else:
+    elif vectorized:
         DT = duplication_matrix(nodes)
         E = elimination_sym_matrix(nodes)
 
-    prior = build_complex_prior(nodes, identification.lambdaprime, y_init, E, DT, laplacian, identification.use_tls_diag,
-                                identification.contrast_each_row, identification.regularize_diag)
+    if vectorized:
+        prior = build_complex_prior(nodes, identification.lambdaprime, y_init, E, DT, laplacian, identification.use_tls_diag,
+                                    identification.contrast_each_row, identification.regularize_diag)
+    else:
+        prior = build_multi_prior(nodes, identification.lambdaprime, y_init, laplacian,
+                                  identification.use_tls_diag, identification.regularize_diag)
+
     if laplacian:
         sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=identification.lambda_eiv, abs_tol=identification.abs_tol,
                                                rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
                                                dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
                                                e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
-    else:
+    elif vectorized:
         sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=identification.lambda_eiv, abs_tol=identification.abs_tol,
                                                rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
                                                dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
+    else:
+        sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=identification.lambda_eiv, abs_tol=identification.abs_tol,
+                                               rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose)
 
     if max_iterations > 0 and voltage is not None and current is not None:
-        pprint("Calculating covariance matrices...")
-        inv_sigma_voltage = average_true_noise_covariance(voltage, np.real(voltage_sd_polar),
-                                                          np.imag(voltage_sd_polar), True)
-        inv_sigma_current = average_true_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
-                                                          np.imag(current_sd_polar), True)
-        pprint("Done!")
+        if vectorized:
+            pprint("Calculating covariance matrices...")
+            inv_sigma_voltage = average_true_noise_covariance(voltage, np.real(voltage_sd_polar),
+                                                              np.imag(voltage_sd_polar), True)
+            inv_sigma_current = average_true_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
+                                                              np.imag(current_sd_polar), True)
+            pprint("Done!")
 
         noisy_voltage = voltage.copy()
         noisy_current = current.copy()
@@ -280,8 +346,12 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
             noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
 
         pprint("STLS identification...")
-        sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_init)
+        if vectorized:
+            sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_init)
+        else:
+            sparse_tls_cov.fit_svd(noisy_voltage, noisy_current, y_init=y_init)
         pprint("Done!")
+
 
         pprint("Extracting results...")
         y_sparse_tls_cov = sparse_tls_cov.fitted_admittance_matrix

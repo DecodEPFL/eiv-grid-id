@@ -1,5 +1,5 @@
 from __future__ import print_function
-from conf.conf import GPU_AVAILABLE, CUDA_DEVICE_USED, DATA_DIR
+from conf.conf import DATA_DIR
 import numpy as np
 import scipy.sparse as sp
 import ctypes

@@ -16,6 +16,9 @@ pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 500)
 
 GPU_AVAILABLE = pkgutil.find_loader('cupy')
+
 # Use this to switch GPU if one is in use.
 # If all GPUs are used you are in bad luck, wait for your turn
-CUDA_DEVICE_USED = 3
+if GPU_AVAILABLE:
+    import cupy as cp
+    cp.cuda.Device(3).use()
