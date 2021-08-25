@@ -33,7 +33,7 @@ from src.models.abstract_models import GridIdentificationModel, UnweightedModel,
 
 class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 
-    def fit(self, x: np.array, y: np.array):
+    def fit(self, x: np.array, z: np.array):
         """
         Uses Singular Value Decomposition to estimate the admittance matrix with error in variables.
 
@@ -41,7 +41,7 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
         """
         n = x.shape[1]
-        y_matrix = y.reshape((y.shape[0], 1)) if len(y.shape) == 1 else y.copy()
+        y_matrix = z.reshape((z.shape[0], 1)) if len(z.shape) == 1 else z.copy()
         u, s, vh = np.linalg.svd(np.block([x, y_matrix]), full_matrices=False)
         v = vh.conj().T
         v_xy = v[:n, n:]
@@ -49,6 +49,60 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         beta = - v_xy @ np.linalg.inv(v_yy)
         beta_reshaped = beta.copy() if beta.shape[1] > 1 else beta.flatten()
         self._admittance_matrix = beta_reshaped
+
+    def fit_vectorized(self, x: np.array, z: np.array, y_init: np.array, n_iter=50):
+        """
+        uses CTLS to fit I = VY minimizing a noise f = vstack(vec(∆V), vec(∆I)), where
+        D = (eye(n).kron(V), vec(I)) and ∆D = [F_1 f, ..., F_{n^2+1} f]
+
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param y_init: starting point for iterative algorithm
+        """
+        samples, n = x.shape
+
+        from src.models.matrix_operations import vectorize_matrix as vectorize_matrix_nogpu
+        from src.models.matrix_operations import unvectorize_matrix as unvectorize_matrix_nogpu
+
+        # Solve with iterative reweighting, but keep Rayleigh form for faster convergence
+        # Hermitian matrix
+        mn = lambda a: np.linalg.inv(unvectorize_matrix_nogpu(a, (n, n)) @ unvectorize_matrix_nogpu(a, (n, n)).T.conj()
+                        + np.eye(n))# * (1 + np.dot(a.conj(), a))
+
+        b = x.T.conj() @ x
+        c = x.T.conj() @ z
+
+        y = vectorize_matrix_nogpu(y_init)
+
+        for i in tqdm(range(n_iter)):
+            #H_1n2 = sparse.kron(unvectorize_matrix(y, (n, n)), sparse.eye(samples))
+            #H_np1 = sparse.eye(samples*n)
+            #M = sparse.linalg.inv(H_1n2 @ H_1n2.T + H_np1)
+            #equivalent to
+
+            #sms = np.block([[np.kron(mn(y), b), vectorize_matrix_nogpu(c @ mn(y).T)[None].T],
+            #                [vectorize_matrix_nogpu(c @ mn(y).T)[None].conj(),
+            #                 np.dot(vectorize_matrix_nogpu(z), vectorize_matrix_nogpu(z @ mn(y).T))]])
+            #print(np.linalg.eigvals(mn(y)))
+            #print(em(y))
+
+            y = np.linalg.solve(np.kron(mn(y), b), vectorize_matrix_nogpu(c @ mn(y).T))
+
+            # Solve with iterative reweighting, but keep Rayleigh form for faster convergence
+            #print(sms.shape)
+            #_, v = np.linalg.eigh(sms)
+            #print(sms)
+            #print(v.shape)
+            #y = v[:-1, 0] / v[-1, 0] # first eigenvector is the smallest
+
+            from src.models.error_metrics import error_metrics
+            print(error_metrics(y_init, unvectorize_matrix_nogpu(y, (n, n))))
+            #print(y)
+
+        y_mat = unvectorize_matrix_nogpu(y, (n, n))
+        print(y_mat)
+        self._admittance_matrix = y_mat
+
 
 
 class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
@@ -136,7 +190,7 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
             x_weight = sp.csr_matrix(x_weight, dtype=cp.float32)
 
         y_mat = y_init
-        M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
+        M, mu, weights = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
         # start iterating
         for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
@@ -175,14 +229,15 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
             y = sp.linalg.spsolve(iASA, ASb_vec).squeeze()
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
 
-            M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
+            M, mu, weights = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
             # Update cost function
             db = (b - AmdA @ y).squeeze()
             cost = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da))
             cost = cost.get() if conf.GPU_AVAILABLE else cost
-            target = cost + self._lambda * penalty
+            target = np.abs(cost + self._lambda * np.sum(weights.conj() * weights))
             self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, target))
+            print(target)
 
             # Check stationarity
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
@@ -194,68 +249,80 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
         else:
             self._admittance_matrix = y_mat
 
-    def fit_svd(self, x: np.array, z: np.array, y_init: np.array):
+    def fit_svd(self, x: np.array, z: np.array, x_weight: np.array = None, z_weight: np.array = None,
+                y_init: np.array = None, eiv_prior_weight = 1e6):
         """
         Maximizes the likelihood db.T Wb db + da.T Wa da + p(y), where p(y) is the prior likelihood of y.
+        This version uses a low rank approximation (much faster) BUT does not work with Laplace/weighted priors
 
         :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
         :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param x_weight: inverse covariance matrix of x
+        :param z_weight: inverse covariance matrix of z
         :param y_init: initial guess of y
         """
-        conf.GPU_AVAILABLE = False
-        # Initialization of parameters
+
+        if x_weight is not None or z_weight is not None:
+            print("Weights not implemented")
+        assert(x_weight is None)
+        assert(z_weight is None)
+
+        #Initialization of parameters
+        if x_weight is None or z_weight is None:
+            z_weight = np.ones_like(z)
+            x_weight = np.ones_like(x)
+
         if conf.GPU_AVAILABLE:
             sp = cusparse
             cp = cupy
 
             x = cp.array(x, dtype=cp.complex64)
             z = cp.array(z, dtype=cp.complex64)
+            x_weight = cp.array(x_weight)
+            z_weight = cp.array(z_weight)
             y_init = cp.array(y_init, dtype=cp.complex64)
 
         else:
             sp = sparse
             cp = np
 
-        # Copy data
+        #Copy data
         samples, n = x.shape
-        y_mat = y_init
 
-        mats = [cp.hstack((x.copy(), z[:, i].copy().reshape((samples, 1)))) for i in range(n)]
-        priors = [(i, self.prior.copy()) for i in range(n)]
-        y = [y_init[:, i].copy() for i in range(n)]
-
-        def run_iteration(m, p, y, k):
-            M, mu, penalty = p[1].log_distribution(y.get() if conf.GPU_AVAILABLE else y, p[0])
-            C = cp.vstack((m, cp.array(self._lambda * np.hstack((M, np.expand_dims(mu, 1))))))
-
-            _, _, vh = cp.linalg.svd(m, full_matrices=False)
-            v = vh.T.conj()
-            return -(v[:-1, -1] / v[-1, -1]).squeeze()
+        y = y_init
+        M, mu, weights = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
         # start iterating
         for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
+            # Create \bar Y from y
+            M, mu, weights = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
+            c = cp.hstack((cp.vstack((x, self._lambda*weights*M)), cp.vstack((z, self._lambda*weights*mu))))
+            u, s, vh = cp.linalg.svd(c, full_matrices=False)
+            v = vh.T.conj()
+            y = - v[:n,n:] @ cp.linalg.inv(v[n:,n:])
+            y = (y + y.T)/2
+            print(s[-n])
 
-            if conf.GPU_AVAILABLE:
-                device = cp.cuda.Device()
-                map_streams = [cp.cuda.stream.Stream() for i in range(n)]
-                for i, stream in enumerate(map_streams):
-                    with stream:
-                        y[i] = run_iteration(mats[i], priors[i], y[i], i)
-                device.synchronize()
-            else:
-                for i in range(n):
-                    y[i] = run_iteration(mats[i], priors[i], y[i], i)
+            c_hat = (u * s) @ vh
+            a_hat = c_hat[:, :n]
 
+            """
             for i in range(n):
-                y_mat[:, i] = y[i].copy()
+                cov = (1 + y[i,:] @ y[:,i])*((s[n+i]*s[n+i]*cp.linalg.inv((a_hat.T.conj() @ a_hat
+                                                                           - s[n+i]*s[n+i]*cp.eye(n)))/samples))
+                tmp = cp.zeros_like(y[:,i])
+                tmp[0] = y[0,i]
+                print(tmp.T @ cp.linalg.inv(cov) @ tmp)
+            """
 
-            self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, 0))
+
+            self._iterations.append(IterationStatus(it, y.get() if conf.GPU_AVAILABLE else y, 0))
 
         # Save results
         if conf.GPU_AVAILABLE:
-            self._admittance_matrix = y_mat.get()
+            self._admittance_matrix = y.get()
         else:
-            self._admittance_matrix = y_mat
+            self._admittance_matrix = y
 
 """ TODO: rewrite this
     def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):

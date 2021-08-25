@@ -55,8 +55,9 @@ y_bus = np.array([
 ])
 
 nodes = 4
-samples = 400
-window = 4*nodes
+samples = 1000
+window = 1#4*nodes
+start = 16
 
 voltage = np.random.normal(1, voltage_std*np.sqrt(voltage_moving_average), (samples+voltage_moving_average, nodes)) \
           + 1j*np.random.normal(0, voltage_std*np.sqrt(voltage_moving_average), (samples+voltage_moving_average, nodes))
@@ -80,6 +81,10 @@ tls.fit(np.kron(np.eye(nodes), noisy_voltage), vectorize_matrix(noisy_current))
 y_tls = tls.fitted_admittance_matrix
 print("tls full data: ", rrms_error(y_bus, unvectorize_matrix(y_tls, (nodes, nodes))))
 
+tls = TotalLeastSquares()
+tls.fit(noisy_voltage, noisy_current)
+y_tls = tls.fitted_admittance_matrix
+print("tls full data unkroned: ", rrms_error(y_bus, y_tls))
 
 # EKF starts here
 
@@ -128,7 +133,6 @@ def mrls_step(v, y, vm, im, mv_inv, my_inv, rv, ry):
     y = unvectorize_matrix(make_complex_vector(np.linalg.solve(myn_inv, ryn)), (n,n))
     """
 
-    # Only use the most refined samples
     bigv = make_real_matrix(np.kron(np.eye(n), vmo[0, :] - v[0, :]))
     my_inv = fy * bigv.T @ np.linalg.inv(ssigma_i) @ bigv + (1 - fy)*my_inv
     ry = fy * bigv.T @ np.linalg.inv(ssigma_i) @ make_real_vector(vectorize_matrix(imo[0, :])) + (1 - fy)*ry
@@ -136,26 +140,38 @@ def mrls_step(v, y, vm, im, mv_inv, my_inv, rv, ry):
 
     return v, y, mv_inv, my_inv, rv, ry
 
-def rtls_step(vm, im, pmat, vec):
+
+def fro_mrls_step(y, vm, im, pmat):
     f = 1 - 1e-4
-    n = len(vm)
-    bigv = make_real_matrix(np.kron(np.eye(n), vm.reshape((1, n))))
-    im = make_real_vector(im)
 
-    for i in range(len(im)):
-        x = np.expand_dims(np.concatenate((bigv[i, :], np.array([im[i]]))), 1)
-        k = pmat @ x / (f + x.conj().T @ pmat @ x)
-        pmat = (pmat - k @ x.conj().T @ pmat) / f
-    vec = pmat @ vec
-    vec = vec / np.linalg.norm(vec) #@ np.diag(np.divide(1, np.linalg.norm(vec, axis=0)))
+    if len(vm.shape) == 1:
+        vm = vm[None]
+    if len(im.shape) == 1:
+        im = im[None]
+    assert(vm.shape[0] == im.shape[0])
 
-    return vec, pmat, (- vec[:-1] / vec[-1]).conj()
+    m, n = v.shape
+    x = np.hstack((vm, im))
+
+    for i in range(m):
+        xi = x[i, :][None].T
+        #k = pmat @ xi / (f + xi.conj().T @ pmat @ xi)
+        #pmat = (pmat - k @ xi.conj().T @ pmat) / f
+        pmat = f*pmat + xi.conj() @ xi.T
+
+    z_mat = np.vstack((y, -np.eye(n)))
+    pmat = pmat - z_mat @ np.linalg.inv(z_mat.T.conj() @ z_mat) @ z_mat.T.conj() @ pmat
+    y = unvectorize_matrix(np.kron(np.eye(n), np.linalg.inv(pmat[:n, :n])) @ vectorize_matrix(pmat[:n, n:]), (n, n))
+    #y = np.linalg.inv(pmat[:n, :n]) @ pmat[:n, n:]
+
+    return y, pmat
 
 
 
-v = np.zeros_like(noisy_voltage[:window,:].copy())#[:nodes,:]
-y = y_bus + np.random.normal(0, np.mean(np.abs(y_bus))/10, (nodes, nodes))
-y_tls = y.copy()
+v = np.zeros_like(noisy_voltage[start:window+start,:].copy())#[:nodes,:]
+y = y_bus + np.random.normal(0, np.mean(np.abs(y_bus))/4, (nodes, nodes))
+y_unvec = y.copy()
+print("original error: ", rrms_error(y_bus, y))
 
 mv = np.eye(2*window*nodes)#, 2*window*nodes))
 my = np.eye(2*nodes*nodes)#, 2*nodes*nodes))
@@ -164,34 +180,33 @@ ry = make_real_vector(vectorize_matrix(y))#np.zeros(2*nodes*nodes)#(nodes*nodes,
 
 err, chg, unc = np.zeros(samples-window), np.zeros(samples-window), np.zeros(samples-window)
 
+p = np.hstack((noisy_voltage[:start, :], noisy_current[:start, :]))
+p = p.T.conj() @ p
 
-p_mat = np.eye(2*nodes*nodes+1)
-eigvec = np.concatenate((make_real_vector(vectorize_matrix(y_tls).conj()), -np.array([1])))
-
-for i in tqdm(range(0,samples-window)):
+for i in tqdm(range(start, samples-window)):
     #print(np.linalg.norm(np.linalg.pinv(noisy_voltage[i:i+10, :]) @ noisy_current[i:i+10, :] - y_bus))
     v, y, mv, my, rv, ry = mrls_step(v, y, noisy_voltage[i:i+window, :], noisy_current[i:i+window, :], mv, my, rv, ry)
+    y_unvec, p = fro_mrls_step(y_unvec, noisy_voltage[i:i+window, :], noisy_current[i:i+window, :], p)
 
-    eigvec, p_mat, y_tls = rtls_step(noisy_voltage[i+window, :], noisy_current[i+window, :], p_mat, eigvec)
-    y_tls = unvectorize_matrix(make_complex_vector(y_tls), (nodes, nodes))
-
-    err[i] = rrms_error(y_bus, y)
+    err[i] = rrms_error(y_bus, y_unvec)
     chg[i] = rrms_error(noisy_voltage[i + window, :] - voltage[i:i+window, :], v)
-    print(1000*(noisy_voltage[i + window, :] - voltage[i:i+window, :]))
-    print(1000*v)
+    #print(1000*(noisy_voltage[i + window, :] - voltage[i:i+window, :]))
+    #print(1000*v)
 
     v[:-1, :] = v[1:, :]
     v[-1, :] = np.zeros_like(noisy_voltage[i+window, :].copy())
 
-print(err)
-print(chg)
+#print(err)
+#print(chg)
 #print(1000*unc)
 
-print(rrms_error(y_bus, y))
-print(rrms_error(y_bus, y_tls))
+print("final error: ", rrms_error(y_bus, y))
+print("unvectorized error: ", rrms_error(y_bus, y_unvec))
+#print(rrms_error(y_bus, unvectorize_matrix(y_tls, (nodes, nodes))))
 
 print(y)
-print(y_tls)
+print(y_unvec)
+print(err)
 
 """
 plt.plot(voltage[:, 0], 'b')

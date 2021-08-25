@@ -38,9 +38,18 @@ class LatencyWeightedModel(ABC):
 
 
 class MisfitWeightedModel(ABC):
+
+    def __init__(self):
+        super().__init__()
+        self._iterations = None
+
     @abstractmethod
     def fit(self, x: np.array, z: np.array, x_weight: np.array, z_weight: np.array, y_init: np.array):
         pass
+
+    @property
+    def iterations(self) -> np.array:
+        return self._iterations
 
 
 class GridIdentificationModel(ABC):

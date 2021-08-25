@@ -18,8 +18,8 @@ from src.simulation.net_templates_3ph import ieee123_types
               default=(conf.conf.DATA_DIR / str("profiles/Reactive_Electricity_Profile_RNEplus.npy")),
               help="Path to the reactive load profiles (csv or npy file)")
 @click.option('--loads', "-p", is_flag=True, help='Recompute load profiles only (stackable with s and d)')
-@click.option('--network-sim', "-s", is_flag=True, help='Recompute network simulation only (stackable with d and l)')
-@click.option('--noise', "-d", is_flag=True, help='Recompute noise only (stackable with s and l)')
+@click.option('--network-sim', "-s", is_flag=True, help='Recompute network simulation only (stackable with d and p)')
+@click.option('--noise', "-d", is_flag=True, help='Recompute noise only (stackable with s and p)')
 @click.option('--three-phased', "-t", is_flag=True, help='Identify asymmetric network')
 @click.option('--equivalent-noise', "-e", is_flag=True, help='Use equivalent noise or recompute at each time step')
 @click.option('--laplacian', "-l", is_flag=True, help='Identify a Laplacian admittance')
@@ -27,7 +27,6 @@ from src.simulation.net_templates_3ph import ieee123_types
 
 def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
              noise, three_phased, equivalent_noise, laplacian, verbose):
-    print(vars(conf))
     # What should be redone and what should be just read
     redo_loads = loads or (not loads and not network_sim and not noise)
     redo_netsim = network_sim or (not loads and not network_sim and not noise)

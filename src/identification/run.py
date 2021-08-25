@@ -7,6 +7,7 @@ from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, BayesianEIVRegression
 from src.models.noise_transformation import average_true_noise_covariance
 from src.models.smooth_prior import SmoothPrior, SparseSmoothPrior
+from src.models.multi_prior import MultiSmoothPrior
 from conf.conf import DATA_DIR
 from conf import identification
 
@@ -54,7 +55,7 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
     y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
 
     # Make base prior
-    prior = SparseSmoothPrior(smoothness_param=1e-8, n=len(E @ vectorize_matrix(y_tls))*2)
+    prior = SparseSmoothPrior(smoothness_param=1e-4, n=len(E @ vectorize_matrix(y_tls))*2)
 
     # Indices of all non-diagonal elements. We do not want to penalize diagonal ones (always non-zero)
     idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((nodes, nodes))
@@ -84,7 +85,8 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
 
         prior.add_contrast_prior(indices=idx_contrast,
                                  values=values_contrast.reshape((2*nodes, 1)),
-                                 weights=lambdaprime*np.concatenate((-np.ones(nodes), np.ones(nodes)))/values_contrast,
+                                 weights=lambdaprime*(np.concatenate((-np.ones(nodes), np.ones(nodes)))/
+                                                      values_contrast).reshape((2*nodes, 1)),
                                  orders=SmoothPrior.LAPLACE)
 
         if regularize_diag:
@@ -100,7 +102,7 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
         prior.add_contrast_prior(indices=np.vstack(tuple(np.split(idx_offdiag, 2))),
                                  values=np.sum(np.vstack(tuple(np.split(-values_contrast, 2))), axis=1),
                                  weights=lambdaprime*np.array([1, -1]) /
-                                         np.sum(np.vstack(tuple(np.split(-values_contrast, 2))), axis=1).squeeze(),
+                                         np.sum(np.vstack(tuple(np.split(-values_contrast, 2))), axis=1),
                                  orders=SmoothPrior.LAPLACE)
 
     return prior
@@ -132,7 +134,7 @@ def build_multi_prior(nodes, lambdaprime, y_tls, laplacian=False,
     y_sym_tls_ns = y_sym_tls - np.diag(np.diag(y_sym_tls))
 
     # Make base prior
-    prior = SmoothPrior(smoothness_param=(1+1j)*1e-8, n=nodes, m=nodes)
+    prior = MultiSmoothPrior(smoothness_param=(1+1j)*1e-8, n=nodes, m=nodes)
 
     # Add lasso penalty, with or without diagonal elements
     if regularize_diag:
@@ -144,19 +146,23 @@ def build_multi_prior(nodes, lambdaprime, y_tls, laplacian=False,
                                  orders=SmoothPrior.GAUSS)
 
     # If laplacian or variant hidden nodes, the total value estimate from non-diagonal elements is not the best
-    values_contrast = np.diag(y_tls) if use_tls_diag else -np.sum(y_sym_tls_ns, axis=1)
-    values_contrast = values_contrast if laplacian else -values_contrast
+    values_contrast = -np.diag(y_tls) if use_tls_diag else np.sum(y_sym_tls_ns, axis=1)
+    values_contrast = -values_contrast.reshape((1, nodes)) if laplacian else values_contrast.reshape((1, nodes))
 
     # Indices of the real part of each rows stacked with the indices of the imaginary part of each row
-    prior.add_contrast_prior(indices=np.arange(nodes).reshape((nodes, 1)),
-                             values=values_contrast.reshape((nodes, 1)),
-                             weights=lambdaprime / (-np.real(values_contrast) + 1j*np.imag(values_contrast)),
+    #prior.add_contrast_prior(indices=np.tile(np.arange(nodes), (nodes, 1))[~np.eye(nodes, dtype=bool)].reshape(nodes,-1),
+    #                         values=np.diag((np.real(values_contrast) + 1j*np.imag(values_contrast)).squeeze()),
+    #                         weights=(lambdaprime*np.eye(nodes) + prior.alpha),#(-1+1j)*
+    #                         orders=SmoothPrior.GAUSS)
+    prior.add_contrast_prior(indices=np.arange(nodes).reshape((1, nodes)),
+                             values=np.zeros((1, nodes)),
+                             weights=lambdaprime,
                              orders=SmoothPrior.GAUSS)
 
     return prior
 
 
-def standard_methods(name, voltage, current, laplacian=False, max_iterations=10, verbose=True):
+def standard_methods(name, voltage, current, laplacian=False, vectorized=False, max_iterations=10, verbose=True):
     """
     # Performing the ordinary least squares, total least squares, and lasso indentifications of the network.
 
@@ -164,6 +170,7 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
     :param voltage: voltage measurements (complex)
     :param current: current measurements (complex)
     :param laplacian: is the admittance matrix Laplacian?
+    :param vectorized: use the original measurement matrix V I and the multi-prior if False.
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
     """
@@ -214,6 +221,8 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
         pprint("TLS identification...")
         tls = TotalLeastSquares()
         tls.fit(noisy_voltage, noisy_current)
+        if vectorized:# and max_iterations > 0:
+            tls.fit_vectorized(noisy_voltage, noisy_current, tls.fitted_admittance_matrix, 10)#max_iterations)
         y_tls = tls.fitted_admittance_matrix
         #from src.models.matrix_operations import make_real_matrix, make_real_vector, make_complex_vector
         #make_real_matrix = lambda x: x

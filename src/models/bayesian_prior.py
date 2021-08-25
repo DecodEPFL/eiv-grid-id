@@ -77,11 +77,12 @@ class BayesianPrior(object):
 
         :param indices: m-by-n matrix of indices. The rows contain sets of parameters to be contrasted
         :param values: values of the weighted sum of parameters in one row of indices
-        :param weights: weight for each row
+        :param weights: weight for each row and each column of mu
         """
-        weights = self._std_weights(weights, np.array(indices[:, 0], dtype=self.mu.dtype))
+        assert(values.shape[1] == self.m)
+        weights = self._std_weights(weights, np.empty((indices.shape[0], 1), dtype=self.mu.dtype))
 
-        self.mu = np.vstack((self.mu, np.tile(weights, (self.m, 1)).T*values))
+        self.mu = np.vstack((self.mu, np.tile(weights, (1, self.m))*values))
         added_L = np.zeros((indices.shape[0], self.n), dtype=self.L.dtype)
         for i in range(indices.shape[0]):
             added_L[i, indices[i, :]] = weights[i]

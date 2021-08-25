@@ -73,8 +73,8 @@ def plot_results(network, max_plot_y, max_plot_err, laplacian, verbose):
 
 
         pprint("Plotting bayesian eiv result...")
-        sparse_tls_cov_errors = pd.Series([rrms_error(y_bus, i.fitted_parameters) for i in sparse_tls_cov_iterations])
-        sparse_tls_cov_targets = pd.Series([i.target_function for i in sparse_tls_cov_iterations])
+        sparse_tls_cov_errors = np.array([rrms_error(y_bus, i.fitted_parameters) for i in sparse_tls_cov_iterations])
+        sparse_tls_cov_targets = np.array([i.target_function for i in sparse_tls_cov_iterations])
 
         sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
         with open(conf.conf.DATA_DIR / 'sparse_tls_error_metrics.txt', 'w') as f:
@@ -83,8 +83,8 @@ def plot_results(network, max_plot_y, max_plot_err, laplacian, verbose):
         plot_heatmap(np.abs(y_sparse_tls_cov), "y_sparse_tls_cov", minval=0, maxval=max_plot_y)
         plot_heatmap(np.abs(y_sparse_tls_cov - y_bus), "y_sparse_tls_cov_errors", minval=0, maxval=max_plot_err)
 
-        plot_series(np.expand_dims(sparse_tls_cov_errors.to_numpy(), axis=1), 'errors', s=3, colormap='blue2')
-        plot_series(np.expand_dims(sparse_tls_cov_targets[1:].to_numpy(), axis=1), 'targets', s=3, colormap='blue2')
+        plot_series(np.expand_dims(sparse_tls_cov_errors, axis=1), 'errors', s=3, colormap='blue2')
+        plot_series(np.expand_dims(sparse_tls_cov_targets[1:], axis=1), 'targets', s=3, colormap='blue2')
 
         if laplacian:
             E = elimination_lap_matrix(nodes) @ elimination_sym_matrix(nodes)

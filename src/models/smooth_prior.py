@@ -24,8 +24,8 @@ class SmoothPrior(BayesianPrior):
     Class defining various types of bayesian prior log-distributions as smoothened quadratic costs
     """
 
-    def __init__(self, smoothness_param=1e-5, n=1, m=1, other=None):
-        BayesianPrior.__init__(self, n, m, other)
+    def __init__(self, smoothness_param=1e-5, n=1, other=None):
+        BayesianPrior.__init__(self, n, 1, other)
 
         self.alpha = smoothness_param if other is None else other.alpha
         self.gamma = 2 * np.ones_like(self.mu[:, 0])
@@ -40,19 +40,19 @@ class SmoothPrior(BayesianPrior):
     LAPLACE = 1
     GAUSS = 2
 
-    def log_distribution(self, x, k=0):
+    def log_distribution(self, x):
         """
         Obtain the parameters of the log prior probability density distribution p(Ax - b)
 
         :param x: point to evaluate the distribution at
         :param k: use the kth column of mu
         """
-        w = (np.abs(self.L @ x.squeeze() - self.mu[:, k].squeeze()) ** ((2 - self.gamma) / 2)) + self.alpha
+        w = (np.abs(self.L @ x.squeeze() - self.mu.squeeze()) ** ((2 - self.gamma) / 2)) + self.alpha
 
         A = np.diag(np.divide(1, w)) @ self.L
-        b = np.diag(np.divide(1, w)) @ self.mu[:, k].squeeze()
+        b = np.diag(np.divide(1, w)) @ self.mu.squeeze()
 
-        return A, b, np.sum(w * w)
+        return A, b, w
 
     def add_exact_prior(self, indices, values, weights=None, orders=2):
         """
@@ -115,27 +115,26 @@ class SparseSmoothPrior(SmoothPrior):
     Class defining various types of bayesian prior log-distributions as smoothened quadratic costs
     """
 
-    def __init__(self, smoothness_param=1e-5, n=1, m=1, other=None):
-        SmoothPrior.__init__(self, smoothness_param, n, m, other)
+    def __init__(self, smoothness_param=1e-5, n=1, other=None):
+        SmoothPrior.__init__(self, smoothness_param, n, other)
         self.L = sparse.csr_matrix(self.L)
 
     def copy(self):
         return SparseSmoothPrior(other=self)
 
-    def log_distribution(self, x, k=0):
+    def log_distribution(self, x):
         """
         Obtain the parameters of the log prior probability density distribution p(Ax - b)
 
         :param x: point to evaluate the distribution at
-        :param k: use the kth column of mu
         """
-        w = (np.abs(self.L @ x.squeeze() - self.mu[:, k].squeeze()) ** ((2 - self.gamma) / 2)) + self.alpha
+        w = (np.abs(self.L @ x.squeeze() - self.mu.squeeze()) ** ((2 - self.gamma) / 2)) + self.alpha
         W = sparse.diags(np.divide(1, w), format='csr')
 
         A = W @ self.L
-        b = W @ self.mu[:, k].squeeze()
+        b = W @ self.mu.squeeze()
 
-        return A, b, np.sum(w * w)
+        return A, b, w
 
     def add_exact_prior(self, indices, values, weights=None, orders=2):
         """
@@ -161,19 +160,6 @@ class SparseSmoothPrior(SmoothPrior):
         """
         self.L = self.L.toarray()
         SmoothPrior.add_sparsity_prior(self, indices, weights, orders)
-        self.L = sparse.csr_matrix(self.L)
-
-    def add_adaptive_sparsity_prior(self, indices, values, orders=2):
-        """
-        Adds an adaptive prior centered on zero to some parameters
-        Its uncertainty is normalized to adapt to the estimated value of the parameter
-
-        :param indices: indices of the parameters on which the prior apply
-        :param values: values of the parameters for corresponding indices
-        :param orders: order of the log of the distribution (|x|^order)
-        """
-        self.L = self.L.toarray()
-        SmoothPrior.add_adaptive_sparsity_prior(self, indices, values, orders)
         self.L = sparse.csr_matrix(self.L)
 
     def add_contrast_prior(self, indices, values, weights=None, orders=2):

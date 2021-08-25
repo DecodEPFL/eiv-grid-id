@@ -33,6 +33,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
 
     pprint("Loading network simulation...")
     sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/" + name + ".npz"))
+    y_bus = sim_STLS['y']
     noisy_current = sim_STLS['i']
     noisy_voltage = sim_STLS['v']
     pmu_ratings = sim_STLS['p']
@@ -45,7 +46,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
     phase_sd = simulation.phase_sd/np.sqrt(fparam)
 
     y_ols, y_tls, y_lasso = run_fcns.standard_methods(name, noisy_voltage if redo_standard_methods else None,
-                                                      noisy_current, laplacian, max_iterations, verbose)
+                                                      noisy_current, laplacian, vectorize, max_iterations, verbose)
 
     # TODO: implement 3-phase Bayesian eiv identification
     if three_phased:
@@ -66,6 +67,9 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
                                                                         current_magnitude_sd + 1j*phase_sd,
                                                                         pmu_ratings, y_init, vectorize, laplacian,
                                                                         max_iterations if redo_STLS else 0, verbose)
+    from src.models.error_metrics import error_metrics
+    print(error_metrics(y_bus, y_sparse_tls_cov))
+    print(error_metrics(y_bus, (y_tls+y_tls.T)/2))
     if continue_id:
         sparse_tls_cov_iterations = sparse_tls_cov_old_iterations.extend(sparse_tls_cov_iterations)
 
