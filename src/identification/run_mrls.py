@@ -43,8 +43,8 @@ pprint("Done!")
 
 voltage_std = 1e-3
 voltage_moving_average = 100
-voltage_noise = 2e-4
-current_noise = 2e-4
+voltage_noise = 10e-4
+current_noise = 10e-4
 
 np.random.seed(11)
 y_bus = np.array([
@@ -54,8 +54,9 @@ y_bus = np.array([
     [0, 0, -3-1j, 4+1j],
 ])
 
-nodes = 4
-samples = 1000
+nodes = 52
+y_bus = np.random.normal(0,1,(nodes, nodes)) + 1j*np.random.normal(0,1,(nodes, nodes))
+samples = 20000
 window = 1#4*nodes
 start = 16
 
@@ -71,15 +72,16 @@ noisy_current = current + np.random.normal(0, current_noise, (samples, nodes)) \
                 + 1j*np.random.normal(0, current_noise, (samples, nodes))
 
 
-tls = TotalLeastSquares()
-tls.fit(np.kron(np.eye(nodes), noisy_voltage[:2*nodes, :]), vectorize_matrix(noisy_current[:2*nodes, :]))
-y_tls = tls.fitted_admittance_matrix
-print("tls square data: ", rrms_error(y_bus, unvectorize_matrix(y_tls, (nodes, nodes))))
+if False:
+    tls = TotalLeastSquares()
+    tls.fit(np.kron(np.eye(nodes), noisy_voltage[:2*nodes, :]), vectorize_matrix(noisy_current[:2*nodes, :]))
+    y_tls = tls.fitted_admittance_matrix
+    print("tls square data: ", rrms_error(y_bus, unvectorize_matrix(y_tls, (nodes, nodes))))
 
-tls = TotalLeastSquares()
-tls.fit(np.kron(np.eye(nodes), noisy_voltage), vectorize_matrix(noisy_current))
-y_tls = tls.fitted_admittance_matrix
-print("tls full data: ", rrms_error(y_bus, unvectorize_matrix(y_tls, (nodes, nodes))))
+    tls = TotalLeastSquares()
+    tls.fit(np.kron(np.eye(nodes), noisy_voltage), vectorize_matrix(noisy_current))
+    y_tls = tls.fitted_admittance_matrix
+    print("tls full data: ", rrms_error(y_bus, unvectorize_matrix(y_tls, (nodes, nodes))))
 
 tls = TotalLeastSquares()
 tls.fit(noisy_voltage, noisy_current)
@@ -160,9 +162,13 @@ def fro_mrls_step(y, vm, im, pmat):
         pmat = f*pmat + xi.conj() @ xi.T
 
     z_mat = np.vstack((y, -np.eye(n)))
-    pmat = pmat - z_mat @ np.linalg.inv(z_mat.T.conj() @ z_mat) @ z_mat.T.conj() @ pmat
-    y = unvectorize_matrix(np.kron(np.eye(n), np.linalg.inv(pmat[:n, :n])) @ vectorize_matrix(pmat[:n, n:]), (n, n))
-    #y = np.linalg.inv(pmat[:n, :n]) @ pmat[:n, n:]
+    res_projor = (np.eye(2*n) - z_mat @ np.linalg.inv(z_mat.T.conj() @ z_mat) @ z_mat.T.conj())
+    pmat_lproj = res_projor @ pmat
+    #pmat = (pmat.T.conj() + pmat)/2
+    pmat_rproj = pmat_lproj @ res_projor.T.conj()
+    y = unvectorize_matrix(np.linalg.solve(np.kron(np.eye(n), pmat_rproj[:n, :n]),
+                                           vectorize_matrix(pmat_lproj[:n, n:])), (n, n))
+    #y = np.linalg.inv(pmat_rproj[:n, :n]) @ pmat_lproj[:n, n:]
 
     return y, pmat
 

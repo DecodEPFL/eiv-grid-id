@@ -14,9 +14,10 @@ from conf import simulation
 @click.option('--continue-id', "-c", is_flag=True, help='Is the matrix laplacian')
 @click.option('--three-phased', "-t", is_flag=True, help='Identify asymmetric network')
 @click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
+@click.option('--weighted', "-w", is_flag=True, help='Use covariance matrices as weights')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three_phased, laplacian, verbose):
+def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three_phased, laplacian, weighted, verbose):
     if verbose:
         def pprint(a):
             print(a)
@@ -63,7 +64,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
     y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current,
                                                                         voltage_magnitude_sd + 1j*phase_sd,
                                                                         current_magnitude_sd + 1j*phase_sd,
-                                                                        pmu_ratings, y_init, laplacian,
+                                                                        pmu_ratings, y_init, laplacian, weighted,
                                                                         max_iterations if redo_STLS else 0, verbose)
     if continue_id:
         sparse_tls_cov_iterations = sparse_tls_cov_old_iterations.extend(sparse_tls_cov_iterations)

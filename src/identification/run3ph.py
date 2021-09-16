@@ -163,7 +163,7 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
 
 
 def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, laplacian=False, max_iterations=50, verbose=True):
+                 y_init, laplacian=False, weighted=False, max_iterations=50, verbose=True):
     # L1 Regularized weighted TLS
     """
     # Computing the Maximum Likelihood Estimator,
@@ -181,6 +181,7 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     :param pmu_ratings: current ratings of the measuring devices
     :param y_init: initial parameters estimate
     :param laplacian: is the admittance matrix Laplacian?
+    :param weighted: Use covariances or just identity (classical TLS)?
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
     """

@@ -215,7 +215,7 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
 
 
 def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, laplacian=False, max_iterations=50, verbose=True):
+                 y_init, laplacian=False, weighted=False, max_iterations=50, verbose=True):
     # L1 Regularized weighted TLS
     """
     # Computing the Maximum Likelihood Estimator,
@@ -233,6 +233,7 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     :param pmu_ratings: current ratings of the measuring devices
     :param y_init: initial parameters estimate
     :param laplacian: is the admittance matrix Laplacian?
+    :param weighted: Use covariances or just identity (classical TLS)?
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
     """
@@ -264,12 +265,15 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
                                                dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
 
     if max_iterations > 0 and voltage is not None and current is not None:
-        pprint("Calculating covariance matrices...")
-        inv_sigma_voltage = average_true_noise_covariance(voltage, np.real(voltage_sd_polar),
-                                                          np.imag(voltage_sd_polar), True)
-        inv_sigma_current = average_true_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
-                                                          np.imag(current_sd_polar), True)
-        pprint("Done!")
+        inv_sigma_voltage = None
+        inv_sigma_current = None
+        if weighted:
+            pprint("Calculating covariance matrices...")
+            inv_sigma_voltage = average_true_noise_covariance(voltage, np.real(voltage_sd_polar),
+                                                              np.imag(voltage_sd_polar), True)
+            inv_sigma_current = average_true_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
+                                                              np.imag(current_sd_polar), True)
+            pprint("Done!")
 
         noisy_voltage = voltage.copy()
         noisy_current = current.copy()

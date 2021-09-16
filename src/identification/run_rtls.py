@@ -43,8 +43,8 @@ pprint("Done!")
 
 voltage_std = 1e-3
 voltage_moving_average = 100
-voltage_noise = 2e-4
-current_noise = 2e-4
+voltage_noise = 10e-4
+current_noise = 10e-4
 
 np.random.seed(11)
 y_bus = np.array([
@@ -56,7 +56,7 @@ y_bus = np.array([
 
 nodes = 4
 #y_bus = np.random.rand(nodes, nodes)
-samples = 1000
+samples = 2000
 window = 1#4*nodes
 
 voltage = np.random.normal(1, voltage_std*np.sqrt(voltage_moving_average), (samples+voltage_moving_average, nodes)) \

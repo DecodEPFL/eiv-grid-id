@@ -128,50 +128,64 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
         b = make_real_vector(vectorize_matrix(z))
 
         #Use covariances if provided but transform them into sparse
-        if x_weight is None or z_weight is None:
-            z_weight = sp.eye(2 * n * samples, format='csr', dtype=cp.float32)
-            x_weight = sp.eye(2 * n * samples, format='csr', dtype=cp.float32)
-        else:
-            z_weight = sp.csr_matrix(z_weight, dtype=cp.float32)
+        if x_weight is not None:
             x_weight = sp.csr_matrix(x_weight, dtype=cp.float32)
+        if z_weight is not None:
+            z_weight = sp.csr_matrix(x_weight, dtype=cp.float32)
 
         y_mat = y_init
         M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
         # start iterating
         for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
-            # Create \bar Y from y
-            real_beta_kron = sp.kron(cp.real(y_mat), sp.eye(samples), format='csr')
-            imag_beta_kron = sp.kron(cp.imag(y_mat), sp.eye(samples), format='csr')
-            underline_y = sp.bmat([[real_beta_kron, -imag_beta_kron],
-                                       [imag_beta_kron, real_beta_kron]], format='csr')
+            if z_weight is not None and x_weight is not None:
+                # Create \bar Y from y
+                real_beta_kron = sp.kron(cp.real(y_mat), sp.eye(samples), format='csr')
+                imag_beta_kron = sp.kron(cp.imag(y_mat), sp.eye(samples), format='csr')
+                underline_y = sp.bmat([[real_beta_kron, -imag_beta_kron],
+                                           [imag_beta_kron, real_beta_kron]], format='csr')
 
-            # Solve da from a linear equation (this is long)
-            ysy = underline_y.T @ z_weight @ underline_y
-            sys_matrix = sp.csr_matrix(ysy + x_weight)
-            sys_vector = ysy @ a - underline_y.T @ z_weight @ b
+                # Solve da from a linear equation (this is long)
+                ysy = underline_y.T @ z_weight @ underline_y
+                sys_matrix = sp.csr_matrix(ysy + x_weight)
+                sys_vector = ysy @ a - underline_y.T @ z_weight @ b
 
-            # Free useless stuff before heavy duties
-            del real_beta_kron
-            del imag_beta_kron
-            del underline_y
-            del ysy
-            if conf.GPU_AVAILABLE:
-                cp._default_memory_pool.free_all_blocks()
+                # Free useless stuff before heavy duties
+                del real_beta_kron
+                del imag_beta_kron
+                del underline_y
+                del ysy
+                if conf.GPU_AVAILABLE:
+                    cp._default_memory_pool.free_all_blocks()
 
-            # Solve the Delta V sub-problem (this is long)
-            da = sp.linalg.spsolve(sys_matrix, sys_vector).squeeze()
+                # Solve the Delta V sub-problem (this is long)
+                da = sp.linalg.spsolve(sys_matrix, sys_vector).squeeze()
 
-            # Create dA from da
-            e_qp = sp.csr_matrix(unvectorize_matrix(make_complex_vector(da), x.shape), dtype=cp.complex64)
-            dA = make_real_matrix(sp.kron(sp.eye(n), e_qp, format='csr') @ DT)
+                # Create dA from da
+                e_qp = sp.csr_matrix(unvectorize_matrix(make_complex_vector(da), x.shape), dtype=cp.complex64)
+                dA = make_real_matrix(sp.kron(sp.eye(n), e_qp, format='csr') @ DT)
 
-            # Update y
-            AmdA = sp.csr_matrix(A - dA)
+                # Update y equation
+                AmdA = sp.csr_matrix(A - dA)
 
-            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * sp.csr_matrix(M)
-            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * cp.array(mu)
+                iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * sp.csr_matrix(M)
+                ASb_vec = AmdA.T @ z_weight @ b + self._lambda * cp.array(mu)
 
+            else:
+                # Find projector on power-flow equations
+                nullsp = cp.vstack((y_mat, -cp.eye(n)))
+                projor = cp.eye(2*n) - nullsp @ cp.linalg.inv(nullsp.T.conj() @ nullsp) @ nullsp.T.conj()
+
+                # Solve the Delta V sub-problem using projection
+                e_qp = (cp.hstack((x, z)) @ projor)[:, :n]
+                da = vectorize_matrix(e_qp)
+                AmdA = make_real_matrix(sp.kron(sp.eye(n), e_qp, format='csr') @ DT)
+
+                # Update y equation
+                iASA = (AmdA.T @ AmdA) + self._lambda * sp.csr_matrix(M)
+                ASb_vec = AmdA.T @ b + self._lambda * cp.array(mu)
+
+            # Solve new y
             y = sp.linalg.spsolve(iASA, ASb_vec).squeeze()
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
 
@@ -179,7 +193,10 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
 
             # Update cost function
             db = (b - AmdA @ y).squeeze()
-            cost = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da))
+            if z_weight is not None and x_weight is not None:
+                cost = db.dot(z_weight.dot(db)) + da.dot(x_weight.dot(da))
+            else:
+                cost = db.dot(db) + da.dot(da)
             cost = cost.get() if conf.GPU_AVAILABLE else cost
             target = cost + self._lambda * penalty
             self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, target))
