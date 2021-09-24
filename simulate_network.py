@@ -28,7 +28,7 @@ from src.simulation.net_templates_3ph import ieee123_types
 
 def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
              network_sim, noise, three_phased, equivalent_noise, laplacian, verbose):
-    print(vars(conf))
+
     # What should be redone and what should be just read
     redo_loads = loads or (not loads and not network_sim and not noise)
     redo_netsim = network_sim or (not loads and not network_sim and not noise)
