@@ -50,11 +50,6 @@ def test_make_complex_vector():
 
 
 def test_transformation_matrix():
-    m = np.array([
-        [2, -1, -1],
-        [-1, 4, -3],
-        [-1, -3, 4],
-    ])
     mv = np.array([2, -1, -1, 4, -3, 4])
     v = np.array([1, 1, 3])
     np.testing.assert_equal(mv, transformation_matrix(3) @ v)
