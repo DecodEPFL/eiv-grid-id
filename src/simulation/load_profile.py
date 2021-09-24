@@ -181,7 +181,7 @@ def load_profile_from_csv(
 
 
 def load_profile_from_numpy(
-        active_file: str, reactive_file: str, skip_header: np.array, skip_footer: np.array,
+        active_file: str, reactive_file: str, skip_header: np.array, length: np.array,
         load_p_reference: np.array, load_q_reference: np.array,
         load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None, verbose=False):
     """
@@ -191,7 +191,7 @@ def load_profile_from_numpy(
     :param active_file: file for active powers
     :param reactive_file: file for reactive powers
     :param skip_header: number of lines to skip at the beginning of the file
-    :param skip_footer: number of lines to skip at the end of the file
+    :param length: number of lines to read
     :param load_p_reference: nominal values of active loads
     :param load_q_reference: nominal values of reactive loads
     :param load_p_rb: nominal values of active loads of phase 2
@@ -203,6 +203,7 @@ def load_profile_from_numpy(
     n_load = len(load_p_reference)
     pl = np.load(active_file, mmap_mode='r')
     ql = np.load(reactive_file, mmap_mode='r')
+    skip_footer = pl.shape[0] - (length + skip_header)
     pload_profile = np.zeros((0, pl.shape[1]))
     qload_profile = np.zeros((0, ql.shape[1]))
 
@@ -223,6 +224,8 @@ def load_profile_from_numpy(
     qload_profile = qload_profile/1e6 # [MVA]
     p_mean_percentile = np.mean(np.percentile(np.abs(pload_profile), 90, axis=0))
     q_mean_percentile = np.mean(np.percentile(np.abs(qload_profile), 90, axis=0))
+    #p_mean_percentile = np.mean(np.max(np.abs(pload_profile), axis=0))
+    #q_mean_percentile = np.mean(np.max(np.abs(qload_profile), axis=0))
     if verbose:
         print("90th percentiles for P and Q:")
         print(p_mean_percentile*1e6, " [W] ", q_mean_percentile*1e6, " [VAR]")

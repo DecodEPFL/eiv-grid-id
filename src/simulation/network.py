@@ -74,10 +74,11 @@ class NetData(Net):
             if l.start_bus > l.end_bus:
                 l.start_bus, l.end_bus = l.end_bus, l.start_bus
 
-            pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", str(l.start_bus)),
-                                           pp.get_element_index(self, "bus", str(l.end_bus)),
-                                           l.length, l.R / l.length, l.X / l.length, 0, 1e10,
-                                           "(" + str(l.start_bus) + "," + str(l.end_bus) + ")")
+            if l.status > 0:
+                pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", str(l.start_bus)),
+                                               pp.get_element_index(self, "bus", str(l.end_bus)),
+                                               l.length, l.R / l.length, l.X / l.length, 0, 1e10,
+                                               "(" + str(l.start_bus) + "," + str(l.end_bus) + ")")
         return self
 
     def make_y_bus(self) -> np.array:

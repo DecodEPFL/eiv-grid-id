@@ -83,7 +83,8 @@ class NetData3P(Net):
         :return: self network for chained calls
         """
         for l in ls:
-            self.create_line(l.start_bus, l.end_bus, l.length, l.t)
+            if l.status > 0:
+                self.create_line(l.start_bus, l.end_bus, l.length, l.t)
         return self
 
     def make_y_bus(self) -> np.array:

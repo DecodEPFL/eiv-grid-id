@@ -21,9 +21,9 @@ class LineData(object):
         :param t: index of ending bus
         :param l: length in km
         :param type: name of the standard type, leave None if defining from parameters
-        :param r: total resistance
-        :param x: total reactance
-        :param b: shunt susceptance
+        :param r: total resistance in Ohms
+        :param x: total reactance in Ohms
+        :param b: shunt susceptance in Farads
         :param ra: rate of phase A in percents
         :param rb: rate of phase B in percents
         :param rc: rate of phase B in percents

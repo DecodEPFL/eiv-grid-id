@@ -17,6 +17,7 @@ from src.simulation.net_templates_3ph import ieee123_types
 @click.option('--reactive-profiles', '-r',
               default=(conf.conf.DATA_DIR / str("profiles/Reactive_Electricity_Profile_RNEplus.npy")),
               help="Path to the reactive load profiles (csv or npy file)")
+@click.option('--gaussian-loads', "-g", default=0.0, help='Use random i.i.d. Gaussian loads with std X')
 @click.option('--loads', "-p", is_flag=True, help='Recompute load profiles only (stackable with s and d)')
 @click.option('--network-sim', "-s", is_flag=True, help='Recompute network simulation only (stackable with d and l)')
 @click.option('--noise', "-d", is_flag=True, help='Recompute noise only (stackable with s and l)')
@@ -25,8 +26,8 @@ from src.simulation.net_templates_3ph import ieee123_types
 @click.option('--laplacian', "-l", is_flag=True, help='Identify a Laplacian admittance')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
-             noise, three_phased, equivalent_noise, laplacian, verbose):
+def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
+             network_sim, noise, three_phased, equivalent_noise, laplacian, verbose):
     print(vars(conf))
     # What should be redone and what should be just read
     redo_loads = loads or (not loads and not network_sim and not noise)
@@ -52,11 +53,13 @@ def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
 
     # Make load profiles
     load_params = None
-    if os.path.isfile(active_profiles) and os.path.isfile(reactive_profiles) and redo_loads:
+    if redo_loads and gaussian_loads > 0:
+        load_params = (None, None, gaussian_loads, conf.simulation.days, hidden_nodes)
+    elif os.path.isfile(active_profiles) and os.path.isfile(reactive_profiles) and redo_loads:
         load_params = (active_profiles, reactive_profiles, conf.simulation.selected_weeks,
                        conf.simulation.days, hidden_nodes)
     elif redo_loads:
-        print("Gaussian loads not implemented yet, please provide load profiles")
+        print("Please provide valid load information")
         exit(0)
 
     if three_phased:
@@ -80,7 +83,7 @@ def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
     noise_params = None
     if redo_noise:
         noise_params = (conf.simulation.voltage_magnitude_sd, conf.simulation.current_magnitude_sd,
-                        conf.simulation.phase_sd, equivalent_noise,
+                        conf.simulation.voltage_phase_sd, conf.simulation.current_phase_sd, equivalent_noise,
                         conf.simulation.safety_factor * np.ones(3) if three_phased else conf.simulation.safety_factor)
 
     noise_fcn = run3ph.add_noise_and_filter if three_phased else run.add_noise_and_filter
@@ -105,8 +108,9 @@ def simulate(network, active_profiles, reactive_profiles, loads, network_sim,
               'y': y_bus, 'p': pmu_ratings, 'f': fparam}
     np.savez(conf.conf.DATA_DIR / ("simulations_output/" + net.name + ".npz"), **sim_IV)
 
+    print(np.mean(np.abs(y_bus[np.abs(y_bus)>0])))
     if verbose:
-        print("Dimulation done! Please find the results in data/simulation_output/" + net.name + ".npz")
+        print("Simulation done! Please find the results in data/simulation_output/" + net.name + ".npz")
 
 
 if __name__ == '__main__':

@@ -68,7 +68,7 @@ def add_noise_in_polar_coordinates(current: np.array, voltage: np.array, magnitu
     return noisy_voltage, noisy_current
 
 
-def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: np.array, phase_sd: float) -> np.array:
+def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: np.array, phase_sd: np.array) -> np.array:
     """
     Adds measurement noise in polar coordinates to a data matrices.
     This also supports an array of standard deviations on magnitude.
@@ -92,12 +92,20 @@ def add_polar_noise_to_measurement(actual_measurement: np.array, magnitude_sd: n
         magnitude_noise = np.random.normal(0, magnitude_sd[0], magnitude.shape)
 
     # Generate phase noise
-    phase_noise = np.random.normal(0, phase_sd, phase.shape)
+    if type(phase_sd) is float or phase_sd.size == 1:
+        phase_noise = np.random.normal(0, phase_sd, phase.shape)
+    elif phase_sd.size == phase.shape[1]:
+        phase_noise = np.zeros(phase.shape)
+        for i in range(phase_sd.size):
+            phase_noise[:, i] = np.random.normal(0, phase_sd[i], phase.shape[0])
+    else:
+        phase_noise = np.random.normal(0, phase_sd[0], phase.shape)
 
     # Convert back to cartesian coordinates
-    noisy_magnitude = magnitude + magnitude_noise
-    noisy_phase = phase + phase_noise
+    noisy_magnitude = magnitude + magnitude_noise*magnitude
+    noisy_phase = phase + phase_noise*phase
     noisy_measurement = noisy_magnitude * np.exp(1j * noisy_phase)
+
     return noisy_measurement
 
 def filter_and_resample_measurement(actual_measurement, oldtimes=None, newtimes=None, fparam=1,

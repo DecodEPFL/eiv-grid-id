@@ -35,6 +35,9 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
     sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/" + name + ".npz"))
     noisy_current = sim_STLS['i']
     noisy_voltage = sim_STLS['v']
+    current = sim_STLS['j']
+    voltage = sim_STLS['w']
+    y_bus = sim_STLS['y']
     pmu_ratings = sim_STLS['p']
     fparam = sim_STLS['f']
     pprint("Done!")
@@ -42,10 +45,21 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
     # Updating variance
     voltage_magnitude_sd = simulation.voltage_magnitude_sd/np.sqrt(fparam)
     current_magnitude_sd = simulation.current_magnitude_sd/np.sqrt(fparam)
-    phase_sd = simulation.phase_sd/np.sqrt(fparam)
+    voltage_phase_sd = simulation.voltage_phase_sd/np.sqrt(fparam)
+    current_phase_sd = simulation.current_phase_sd/np.sqrt(fparam)
 
     y_ols, y_tls, y_lasso = run_fcns.standard_methods(name, noisy_voltage if redo_standard_methods else None,
                                                       noisy_current, laplacian, max_iterations, verbose)
+
+    fim_wtls, cov_wtls, expected_max_rrms = run_fcns.eiv_fim(name, voltage, current,
+                                                             voltage_magnitude_sd + 1j * voltage_phase_sd,
+                                                             current_magnitude_sd + 1j * current_phase_sd,
+                                                             pmu_ratings, y_bus, laplacian, verbose)
+    print(expected_max_rrms*100)
+    meaned_volts = voltage-np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
+    #print(np.linalg.eigvals(meaned_volts.T @ meaned_volts))
+    print(np.std(noisy_voltage - voltage, axis=0))
+    print(np.std(noisy_current - current, axis=0))
 
     # TODO: implement 3-phase Bayesian eiv identification
     if three_phased:
@@ -62,8 +76,8 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
         y_init = (y_tls + y_tls.T).copy()/2
 
     y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current,
-                                                                        voltage_magnitude_sd + 1j*phase_sd,
-                                                                        current_magnitude_sd + 1j*phase_sd,
+                                                                        voltage_magnitude_sd + 1j*voltage_phase_sd,
+                                                                        current_magnitude_sd + 1j*current_phase_sd,
                                                                         pmu_ratings, y_init, laplacian, weighted,
                                                                         max_iterations if redo_STLS else 0, verbose)
     if continue_id:

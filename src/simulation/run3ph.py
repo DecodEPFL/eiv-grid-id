@@ -38,53 +38,78 @@ def generate_loads(net, load_params=None, verbose=True):
     if load_params is not None:
         assert(isinstance(load_params, tuple))
         active_file, reactive_file, selected_weeks, days, constant_load_nodes = load_params
-
         times = np.array(range(days * 24 * 60)) * 60  # [s]
 
         np.random.seed(conf.seed)
-        pprint("Reading standard profiles...")
 
-        # load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
-        load_p, load_q = load_profile_from_numpy(active_file=active_file,
-                                                 reactive_file=reactive_file,
-                                                 skip_header=selected_weeks * 7 * 24 * 60,
-                                                 skip_footer=np.array(365 * 24 * 60 - selected_weeks * 7 * 24 * 60
-                                                                      - days / len(selected_weeks) * 24 * 60,
-                                                                      dtype=np.int64),
-                                                 load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
-                                                                            for i in range(len(net.load.p_mw))]),
-                                                 load_q_reference=np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
-                                                                            for i in range(len(net.load.q_mvar))]),
-                                                 load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None,
-                                                 verbose=verbose)
+        if active_file is not None and reactive_file is not None:
+            pprint("Reading standard profiles...")
 
-        print("Asymmetric loads")
-        load_asym = load_profile_from_numpy(active_file=active_file,
-                                            reactive_file=reactive_file,
-                                            skip_header=selected_weeks * 7 * 24 * 60,
-                                            skip_footer=np.array(365 * 24 * 60 - selected_weeks * 7 * 24 * 60
-                                                                 - days / len(selected_weeks) * 24 * 60,
-                                                                 dtype=np.int64),
-                                            load_p_reference=np.array(
-                                                [net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
-                                                 for i in range(len(net.asymmetric_load.p_a_mw))]),
-                                            load_q_reference=np.array(
-                                                [net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
-                                                 for i in range(len(net.asymmetric_load.q_a_mvar))]),
-                                            load_p_rb=np.array(
-                                                [net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
-                                                 for i in range(len(net.asymmetric_load.p_b_mw))]),
-                                            load_q_rb=np.array(
-                                                [net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
-                                                 for i in range(len(net.asymmetric_load.q_b_mvar))]),
-                                            load_p_rc=np.array(
-                                                [net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
-                                                 for i in range(len(net.asymmetric_load.p_c_mw))]),
-                                            load_q_rc=np.array(
-                                                [net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
-                                                 for i in range(len(net.asymmetric_load.q_c_mvar))]),
-                                            verbose=verbose
-                                            )
+            # load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
+            load_p, load_q = load_profile_from_numpy(active_file=active_file,
+                                                     reactive_file=reactive_file,
+                                                     skip_header=selected_weeks * 7 * 24 * 60,
+                                                     length=np.array(days / len(selected_weeks) * 24 * 60,
+                                                                     dtype=np.int64),
+                                                     load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
+                                                                                for i in range(len(net.load.p_mw))]),
+                                                     load_q_reference=np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
+                                                                                for i in range(len(net.load.q_mvar))]),
+                                                     load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None,
+                                                     verbose=verbose)
+
+            print("Asymmetric loads")
+            load_asym = load_profile_from_numpy(active_file=active_file,
+                                                reactive_file=reactive_file,
+                                                skip_header=selected_weeks * 7 * 24 * 60,
+                                                length=np.array(days / len(selected_weeks) * 24 * 60, dtype=np.int64),
+                                                load_p_reference=np.array(
+                                                    [net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
+                                                     for i in range(len(net.asymmetric_load.p_a_mw))]),
+                                                load_q_reference=np.array(
+                                                    [net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
+                                                     for i in range(len(net.asymmetric_load.q_a_mvar))]),
+                                                load_p_rb=np.array(
+                                                    [net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
+                                                     for i in range(len(net.asymmetric_load.p_b_mw))]),
+                                                load_q_rb=np.array(
+                                                    [net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
+                                                     for i in range(len(net.asymmetric_load.q_b_mvar))]),
+                                                load_p_rc=np.array(
+                                                    [net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
+                                                     for i in range(len(net.asymmetric_load.p_c_mw))]),
+                                                load_q_rc=np.array(
+                                                    [net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
+                                                     for i in range(len(net.asymmetric_load.q_c_mvar))]),
+                                                verbose=verbose
+                                                )
+            pprint("Done!")
+
+        else:
+            _, _, load_std, days, constant_load_nodes = load_params
+            pprint("Generating random loads...")
+            load_asym = generate_gaussian_load(load_std, len(times),
+                                               load_p_reference=np.array(
+                                                   [net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
+                                                    for i in range(len(net.asymmetric_load.p_a_mw))]),
+                                               load_q_reference=np.array(
+                                                   [net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
+                                                    for i in range(len(net.asymmetric_load.q_a_mvar))]),
+                                               load_p_rb=np.array(
+                                                   [net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
+                                                    for i in range(len(net.asymmetric_load.p_b_mw))]),
+                                               load_q_rb=np.array(
+                                                   [net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
+                                                    for i in range(len(net.asymmetric_load.q_b_mvar))]),
+                                               load_p_rc=np.array(
+                                                   [net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
+                                                    for i in range(len(net.asymmetric_load.p_c_mw))]),
+                                               load_q_rc=np.array(
+                                                   [net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
+                                                    for i in range(len(net.asymmetric_load.q_c_mvar))]))
+
+            load_p, load_q = np.zeros_like(load_asym[0]), np.zeros_like(load_asym[0])
+            pprint("Done!")
 
         if constant_load_nodes is not None:
             print(net.load.bus)
@@ -134,7 +159,8 @@ def simulate_net(net, load_p, load_q, load_asym, verbose=True):
     if load_p is not None and load_q is not None and load_asym is not None:
         pprint("Simulating network...")
         y_bus = net.make_y_bus()
-        voltage, current = net.run(load_p, load_q, load_asym, verbose=verbose).get_current_and_voltage()
+        voltage, current = net.run(load_p, load_q, load_asym,
+                                   verbose=verbose, calculate_voltage_angles=True).get_current_and_voltage()
         pprint("Done!")
 
         pprint("Saving data...")

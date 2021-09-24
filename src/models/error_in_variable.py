@@ -50,6 +50,57 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         beta_reshaped = beta.copy() if beta.shape[1] > 1 else beta.flatten()
         self._admittance_matrix = beta_reshaped
 
+    def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
+
+        # Initialization of parameters
+        if conf.GPU_AVAILABLE:
+            sp = cusparse
+            cp = cupy
+
+            x = cp.array(x, dtype=cp.complex128)
+            z = cp.array(z, dtype=cp.complex128)
+            y_mat = cp.array(y_mat, dtype=cp.complex128)
+
+        else:
+            sp = sparse
+            cp = np
+
+        # Copy data
+        samples, n = x.shape
+
+        # Copy data
+        #A = np.hstack((cp.real(x), cp.imag(x)))
+        A = make_real_matrix(sp.kron(sp.eye(n, dtype=cp.float64), x, format='csr'))
+        y = make_real_vector(vectorize_matrix(y_mat))
+
+        # Use covariances if provided but transform them into sparse
+        if x_cov is not None:
+            x_cov = sp.csr_matrix(x_cov, dtype=cp.float64)
+        if y_cov is not None:
+            y_cov = sp.csr_matrix(y_cov, dtype=cp.float64)
+
+        # Create matrices to fill
+        den = cp.empty((2 * n, 2 * n, samples))
+
+        #idxs = cp.tile(cp.arange(samples)[:, None], (1, 2*n)) + cp.tile(cp.arange(2*n)[None, :] * samples, (samples, 1))
+        idxs = cp.array([((ii * samples) + k) for k in range(samples) for ii in range(2*n)])
+        perm = sp.coo_matrix((cp.ones_like(idxs, dtype=cp.float64), (cp.arange(2*n*samples), idxs))).tocsr()
+
+        bigy = sp.kron(sp.eye(samples, dtype=cp.float64), y[:, None], format='csr')
+        Ws = bigy.T @ sp.kron(perm @ x_cov @ perm.T, sp.eye(n, dtype=cp.float64)) @ bigy
+        Ws = (perm.T @ sp.kron(sp.eye(2*n, dtype=cp.float64), Ws) @ perm) + y_cov
+
+        # TODO: Have to assume no correlation <=> linearize power flow : w2 is 0
+        w1 = Ws[:, n*samples:][n*samples:, :].diagonal()
+        w2 = 0*Ws[:, n*samples:][:n*samples, :].diagonal()
+        w3 = Ws[:, :n*samples][:n*samples, :].diagonal()
+        w1i = sp.diags(1 / (w1 - w2 * (w2 / w3)))
+        w3i = sp.diags(1 / (w3 - w2 * (w2 / w1)))
+        w2i = None # sp.diags(-((w2 * w1i) / w3))
+
+        F = (A.T @ sp.bmat([[w1i, w2i], [w2i, w3i]], format='csr') @ A).toarray()
+        return F.get() if conf.GPU_AVAILABLE else F, cp.linalg.inv(F).get() if conf.GPU_AVAILABLE else cp.linalg.inv(F)
+
 
 class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
     """
@@ -211,58 +262,7 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
         else:
             self._admittance_matrix = y_mat
 
-""" TODO: rewrite this
-    def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
-        # Initialization of parameters
-        samples, n = x.shape
-        DT = duplication_matrix(n) @ transformation_matrix(n)
-
-        # Copy data
-        if self.enforce_y_cons:
-            Ar = sparse.csr_matrix(np.real(np.kron(np.eye(n), x) @ DT))
-            Ai = sparse.csr_matrix(np.imag(np.kron(np.eye(n), x) @ DT))
-        else:
-            Ar = sparse.csr_matrix(np.real(np.kron(np.eye(n), x)))
-            Ai = sparse.csr_matrix(np.imag(np.kron(np.eye(n), x)))
-        b = vectorize_matrix(z)
-        yr = np.real(y_mat)
-        yi = np.imag(y_mat)
-
-        # Create matrices to fill
-        nn = n*n
-        if self.enforce_y_cons:
-            nn = int(n*(n-1)/2)
-        F_tls_r = sparse.csr_matrix((nn, nn))
-        F_tls_ir = sparse.csr_matrix((nn, nn))
-        F_tls_i = sparse.csr_matrix((nn, nn))
-
-        # calculate each F_i = h_i h_i^T / (zT R_i z) and summing them up
-        for k in tqdm(range(int(samples))):
-            for i in range(n):
-                # Compute indices to rebuild R_i from full covariance matrices
-                x_weight_idx = [((ii*samples) + k) for ii in range(n)]
-                x_weight_idx_p = [((ii*samples) + k + n*samples) for ii in range(n)]
-                idx = k + i*samples
-                idx_p = k + (n+i)*samples
-
-                # Calculate zT R_i z
-                den_r = yr[:, i].dot(x_cov[:, x_weight_idx][x_weight_idx, :].dot(yr[:, i])) + y_cov[idx, idx]
-                den_i = yi[:, i].dot(x_cov[:, x_weight_idx_p][x_weight_idx_p, :].dot(yi[:, i])) + y_cov[idx_p, idx_p]
-                den_ir = yi[:, i].dot(x_cov[:, x_weight_idx_p][x_weight_idx, :].dot(yr[:, i])) + y_cov[idx_p, idx]
-
-                # Obtain h_i h_i^T
-                hr = Ar[idx, :]
-                hi = Ai[idx, :]
-
-                # adding F_i to F
-                hhir = sparse.kron(hr, hi.T)
-                F_tls_r = F_tls_r + sparse.kron(hr, hr.T) / den_r
-                F_tls_i = F_tls_i + sparse.kron(hi, hi.T) / den_i
-                F_tls_ir = F_tls_ir + (hhir + hhir.T) / den_ir / 2
-
-        # Block 2x2 matrix F for real y
-        return np.block([[F_tls_r.toarray(), F_tls_ir.toarray()], [F_tls_ir.toarray(), F_tls_i.toarray()]])
-
+"""
     def bias_and_variance(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array,
                           y_mat: np.array, Ftls: np.array = None):
         # Initialization of parameters

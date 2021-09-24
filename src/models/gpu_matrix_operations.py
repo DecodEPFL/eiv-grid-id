@@ -80,10 +80,10 @@ def make_real_matrix(m):
 
         return sp.bmat([[real, -imag], [imag, real]], format=m.format)
     else:
-        return cp.block([
-            [cp.real(m), -cp.imag(m)],
-            [cp.imag(m), cp.real(m)]
-        ])
+        return cp.vstack((
+            cp.hstack((cp.real(m), -cp.imag(m))),
+            cp.hstack((cp.imag(m), cp.real(m)))
+        ))
 
 
 def make_complex_matrix(m):

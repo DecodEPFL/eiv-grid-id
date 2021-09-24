@@ -21,7 +21,6 @@ from src.simulation.network import NetData
     Copyright @donelef, @jbrouill on GitHub
 """
 
-
 @dataclass
 class SimulationResult(object):
     """

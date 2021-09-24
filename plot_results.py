@@ -10,8 +10,8 @@ from src.identification.utils import plot_heatmap, plot_scatter, plot_series
 
 @click.command()
 @click.option('--network', "-n", default="bolognani56", help='Name of the network to simulate')
-@click.option('--max-plot-y', "-m", default=18000, help='Maximum admittance on the plots')
-@click.option('--max-plot-err', "-e", default=5000, help='Maximum error on the plots')
+@click.option('--max-plot-y', "-m", default=800, help='Maximum admittance on the plots')
+@click.option('--max-plot-err', "-e", default=50, help='Maximum error on the plots')
 @click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 

@@ -2,7 +2,7 @@ import numpy as np
 
 from conf import conf
 from src.simulation.simulation import SimulatedNet
-from src.simulation.load_profile import load_profile_from_numpy
+from src.simulation.load_profile import load_profile_from_numpy, generate_gaussian_load
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
 
 def make_net(name, bus_data, line_data):
@@ -27,6 +27,8 @@ def generate_loads(net, load_params=None, verbose=True):
     :param load_params: Tuple containing (filepath for active powers of loads, filepath for reactive powers of loads,
                                           weeks of the year to select loads, number of days per selected week,
                                           nodes for which to keep the loads constant and not follow the profile)
+                        or (None, None, load std (relative),
+                            nodes for which to keep the loads constant and not follow the profile)
     :param verbose: verbose ON/OFF
     """
 
@@ -40,24 +42,36 @@ def generate_loads(net, load_params=None, verbose=True):
         assert(isinstance(load_params, tuple))
         active_file, reactive_file, selected_weeks, days, constant_load_nodes = load_params
 
-        times = np.array(range(days * 24 * 60)) * 60  # [s]
-
         np.random.seed(conf.seed)
-        pprint("Reading standard profiles...")
 
-        # load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
-        load_p, load_q = load_profile_from_numpy(active_file=active_file,
-                                                 reactive_file=reactive_file,
-                                                 skip_header=selected_weeks * 7 * 24 * 60,
-                                                 skip_footer=np.array(365 * 24 * 60 - selected_weeks * 7 * 24 * 60
-                                                                      - days / len(selected_weeks) * 24 * 60,
-                                                                      dtype=np.int64),
-                                                 load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
-                                                                            for i in range(len(net.load.p_mw))]),
-                                                 load_q_reference=np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
-                                                                            for i in range(len(net.load.q_mvar))]),
-                                                 load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None,
-                                                 verbose=verbose)
+        if active_file is not None and reactive_file is not None:
+            pprint("Reading standard profiles...")
+            times = np.array(range(days * 24 * 60)) * 60  # [s]
+
+            # load_p, load_q = generate_gaussian_load(net.load.p_mw, net.load.q_mvar, load_cv, steps)
+            load_p, load_q = load_profile_from_numpy(active_file=active_file,
+                                                     reactive_file=reactive_file,
+                                                     skip_header=selected_weeks * 7 * 24 * 60,
+                                                     length=np.array(days / len(selected_weeks) * 24 * 60,
+                                                                     dtype=np.int64),
+                                                     load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
+                                                                                for i in range(len(net.load.p_mw))]),
+                                                     load_q_reference=np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
+                                                                                for i in range(len(net.load.q_mvar))]),
+                                                     load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None,
+                                                     verbose=verbose)
+            pprint("Done!")
+        else:
+            _, _, load_std, days, constant_load_nodes = load_params
+            times = np.array(range(days * 24 * 60)) * 60 # [s]
+
+            pprint("Generating random loads...")
+            load_p, load_q = generate_gaussian_load(load_std, len(times),
+                                                    load_p_reference=np.array([net.load.p_mw[net.load.p_mw.index[i]]
+                                                                               for i in range(len(net.load.p_mw))]),
+                                                    load_q_reference=np.array([net.load.q_mvar[net.load.q_mvar.index[i]]
+                                                                               for i in range(len(net.load.q_mvar))]))
+            pprint("Done!")
 
         if constant_load_nodes is not None:
             for i in range(len(net.load.bus)):
@@ -97,7 +111,8 @@ def simulate_net(net, load_p, load_q, verbose=True):
     if load_p is not None and load_q is not None:
         pprint("Simulating network...")
         y_bus = net.make_y_bus()
-        voltage, current = net.run(load_p, load_q, verbose=verbose).get_current_and_voltage()
+        voltage, current = net.run(load_p, load_q, verbose=verbose, calculate_voltage_angles=True).get_current_and_voltage()
+        #voltage2, current2 = net.run(load_p, load_q, verbose=verbose, calculate_voltage_angles=True, tolerance_mva=1e-2).get_current_and_voltage()
         pprint("Done!")
 
         pprint("Saving data...")
@@ -142,7 +157,8 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
     # Voltages being normalized, it simply becomes $|S|$.
     """
     if noise_params is not None:
-        voltage_magnitude_sd, current_magnitude_sd, phase_sd, use_equivalent_noise, pmu_safety_factor = noise_params
+        voltage_magnitude_sd, current_magnitude_sd, voltage_phase_sd, current_phase_sd,\
+            use_equivalent_noise, pmu_safety_factor = noise_params
     else:
         pmu_safety_factor = 4
 
@@ -154,6 +170,7 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
 
     ts = np.linspace(0, np.max(times), round(np.max(times) * fmeas))
     fparam = int(np.floor(ts.size / steps))
+    fparam_ret = fparam
 
     if noise_params is not None:
         # Noise Generation
@@ -175,7 +192,8 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
             ts = np.linspace(0, np.max(times), round(np.max(times) * fmeas / fparam))
             voltage_magnitude_sd = voltage_magnitude_sd / np.sqrt(fparam)
             current_magnitude_sd = current_magnitude_sd / np.sqrt(fparam)
-            phase_sd = phase_sd / np.sqrt(fparam)
+            voltage_phase_sd = voltage_phase_sd / np.sqrt(fparam)
+            current_phase_sd = current_phase_sd / np.sqrt(fparam)
             fparam = 1
 
             pprint("Done!")
@@ -184,11 +202,13 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
         pprint("Adding noise and filtering...")
 
         mg_stds = np.concatenate((voltage_magnitude_sd * np.ones_like(pmu_ratings), current_magnitude_sd * pmu_ratings))
+        phase_stds = np.concatenate((voltage_phase_sd * np.ones_like(pmu_ratings),
+                                     current_phase_sd * np.ones_like(pmu_ratings)))
 
         noisy_voltage, noisy_current = \
             tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                           std_m=mg_stds, std_p=phase_sd,
+                                                           std_m=mg_stds, std_p=phase_stds,
                                                            noise_fcn=add_polar_noise_to_measurement,
                                                            verbose=True), 2, axis=1))
 
@@ -210,7 +230,7 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
         noisy_voltage, noisy_current, voltage, current = sim_IV["v"], sim_IV["i"], sim_IV["w"], sim_IV["j"]
         pprint("Done!")
 
-    return noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam
+    return noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam_ret
 
 
 def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose=True):
