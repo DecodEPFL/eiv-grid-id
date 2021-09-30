@@ -10,7 +10,7 @@ import numpy as np
 """
 
 #VERY stiff external grid
-ext_sc_carac = {'mva' :1000000000, 'rx':0.1, 'x0x':1.0, 'r0x0':0.1}
+ext_sc_carac = {'mva' :10, 'rx':0.1, 'x0x':1.0, 'r0x0':0.1}
 #ext_sc_carac = {'mva' :np.nan, 'rx':np.nan, 'x0x':np.nan, 'r0x0':np.nan}
 
 

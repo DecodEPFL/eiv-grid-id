@@ -41,7 +41,7 @@ class NetData(Net):
             pp.create_load(self, bus, p, q, name="(" + str(i) + ")", index=i, const_z_percent=Z, const_i_percent=I)
         elif t == Net.TYPE_PCC:
             pp.create_load(self, bus, 0, 0, name="(" + str(i) + ")", index=i)
-            pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['mva'], rx_max=ext_sc_carac['rx'],
+            pp.create_ext_grid(self, bus, s_sc_max_mva=np.nan, rx_max=ext_sc_carac['rx'],
                                r0x0_max=ext_sc_carac['r0x0'], x0x_max=ext_sc_carac['x0x'], max_p_mw=p, max_q_mvar=q)
         return self
 

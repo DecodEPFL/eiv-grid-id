@@ -112,7 +112,6 @@ def generate_loads(net, load_params=None, verbose=True):
             pprint("Done!")
 
         if constant_load_nodes is not None:
-            print(net.load.bus)
             for i in range(len(net.load.bus)):
                 if net.load.bus.values[i] in constant_load_nodes:
                     load_p[:, i] = net.load.p_mw[net.load.p_mw.index[i]]
@@ -205,7 +204,8 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
     # Voltages being normalized, it simply becomes $|S|$.
     """
     if noise_params is not None:
-        voltage_magnitude_sd, current_magnitude_sd, phase_sd, use_equivalent_noise, pmu_safety_factor = noise_params
+        voltage_magnitude_sd, current_magnitude_sd, voltage_phase_sd, current_phase_sd,\
+            use_equivalent_noise, pmu_safety_factor = noise_params
         pmu_safety_factor = pmu_safety_factor.reshape((len(pmu_safety_factor), 1))
     else:
         pmu_safety_factor = np.array([[4], [4], [4]])
@@ -260,7 +260,8 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
             ts = np.linspace(0, np.max(times), round(np.max(times) * fmeas / fparam))
             voltage_magnitude_sd = voltage_magnitude_sd / np.sqrt(fparam)
             current_magnitude_sd = current_magnitude_sd / np.sqrt(fparam)
-            phase_sd = phase_sd / np.sqrt(fparam)
+            voltage_phase_sd = voltage_phase_sd / np.sqrt(fparam)
+            current_phase_sd = current_phase_sd / np.sqrt(fparam)
             fparam = 1
 
             pprint("Done!")
@@ -269,11 +270,13 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
         pprint("Adding noise and filtering...")
 
         mg_stds = np.concatenate((voltage_magnitude_sd * np.ones_like(pmu_ratings), current_magnitude_sd * pmu_ratings))
+        ph_stds = np.concatenate((voltage_phase_sd * np.ones_like(pmu_ratings),
+                                  current_phase_sd * np.ones_like(pmu_ratings)))
 
         noisy_voltage, noisy_current = \
             tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                           std_m=mg_stds, std_p=phase_sd,
+                                                           std_m=mg_stds, std_p=ph_stds,
                                                            noise_fcn=add_polar_noise_to_measurement,
                                                            verbose=True), 2, axis=1))
 
