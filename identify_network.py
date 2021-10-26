@@ -4,6 +4,7 @@ import numpy as np
 from src.identification import run, run3ph
 import conf.identification
 from conf import simulation
+from src.simulation.lines import admittance_phase_to_sequence, measurement_phase_to_sequence
 
 
 @click.command()
@@ -12,17 +13,24 @@ from conf import simulation
 @click.option('--standard', "-s", is_flag=True, help='Redo only standard methods')
 @click.option('--bayesian-eiv', "-b", is_flag=True, help='Redo only Bayesian eiv methods')
 @click.option('--continue-id', "-c", is_flag=True, help='Is the matrix laplacian')
-@click.option('--three-phased', "-t", is_flag=True, help='Identify asymmetric network')
+@click.option('--phases', "-p", type=str, default="1", help='Phases or sequences to identify')
+@click.option('--sequence', "-q", is_flag=True, help='Use zero/positive/negative sequence values')
 @click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
 @click.option('--weighted', "-w", is_flag=True, help='Use covariance matrices as weights')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three_phased, laplacian, weighted, verbose):
+def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phases, sequence, laplacian, weighted, verbose):
     if verbose:
         def pprint(a):
             print(a)
     else:
         pprint = lambda a: None
+
+    if (phases != "012" and phases != "0" and phases != "1" and phases != "2" and sequence) or \
+            (phases != "123" and phases != "1" and phases != "2" and phases != "3" and not sequence):
+        raise NotImplementedError("Error: two phases identification not implemented, " +
+                                  "try to identify phases one by one separately")
+    three_phased = phases == "012" or phases == "123"
 
     redo_standard_methods = standard or (not standard and not bayesian_eiv)
     redo_STLS = bayesian_eiv or (not standard and not bayesian_eiv)
@@ -33,13 +41,28 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
 
     pprint("Loading network simulation...")
     sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/" + name + ".npz"))
-    noisy_current = sim_STLS['i']
-    noisy_voltage = sim_STLS['v']
-    current = sim_STLS['j']
-    voltage = sim_STLS['w']
-    y_bus = sim_STLS['y']
-    pmu_ratings = sim_STLS['p']
-    fparam = sim_STLS['f']
+    noisy_current, noisy_voltage = sim_STLS['i'], sim_STLS['v']
+    current, voltage, y_bus = sim_STLS['j'], sim_STLS['w'], sim_STLS['y']
+    pmu_ratings, fparam, phases_ids = sim_STLS['p'], sim_STLS['f'], sim_STLS['h']
+
+    if not three_phased and np.any(phases_ids != 1):
+        if not np.any(phases_ids == int(phases)):
+            raise IndexError("Error: Trying to identify phase or sequence " + phases +
+                             " but no data is available for it")
+        else:
+            pprint("Identifying " + ("sequence" if sequence else "phase") + " " + phases + "...")
+
+        # Keep chosen phase/sequence
+        idx_todel = (phases_ids != int(phases)).nonzero()
+        y_bus = np.delete(np.delete(y_bus, idx_todel, axis=0), idx_todel, axis=1)
+        pmu_ratings = np.delete(pmu_ratings, idx_todel)
+        [noisy_voltage, noisy_current, voltage, current] = [np.delete(m, idx_todel, axis=1) for m in
+                                                            [noisy_voltage, noisy_current, voltage, current]]
+    pprint("Done!")
+
+    pprint("Saving reference network result...")
+    sim_STLS = {'y': y_bus, 'p': phases, 'l': laplacian}
+    np.savez(conf.conf.DATA_DIR / ("simulations_output/reference_results_" + name + ".npz"), **sim_STLS)
     pprint("Done!")
 
     # Updating variance
@@ -55,15 +78,15 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, three
                                                              voltage_magnitude_sd + 1j * voltage_phase_sd,
                                                              current_magnitude_sd + 1j * current_phase_sd,
                                                              pmu_ratings, y_bus, laplacian, verbose)
+
+    # TODO: remove this
+    #np.set_printoptions(suppress=True, precision=2)
+    #print(y_bus)
     print(expected_max_rrms*100)
     meaned_volts = voltage-np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
-    #print(np.linalg.eigvals(meaned_volts.T @ meaned_volts))
-    print(np.std(noisy_voltage - voltage, axis=0))
-    print(np.std(noisy_current - current, axis=0))
-
-    # TODO: implement 3-phase Bayesian eiv identification
-    if three_phased:
-        return
+    print(np.sqrt(np.linalg.eigvals(meaned_volts.T @ meaned_volts)))
+    # print(np.std(noisy_voltage - voltage, axis=0))
+    # print(np.std(noisy_current - current, axis=0))
 
     if continue_id:
         pprint("Loading previous bayesian eiv identification result...")

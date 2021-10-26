@@ -9,6 +9,7 @@ from src.simulation.simulation import SimulatedNet
 from src.simulation.simulation_3ph import SimulatedNet3P
 from src.simulation import run, run3ph
 from src.simulation.net_templates_3ph import ieee123_types
+from src.simulation.lines import measurement_phase_to_sequence, admittance_phase_to_sequence
 
 @click.command()
 @click.option('--network', "-n", default="bolognani56", help='Name of the network to simulate')
@@ -22,12 +23,13 @@ from src.simulation.net_templates_3ph import ieee123_types
 @click.option('--network-sim', "-s", is_flag=True, help='Recompute network simulation only (stackable with d and l)')
 @click.option('--noise', "-d", is_flag=True, help='Recompute noise only (stackable with s and l)')
 @click.option('--three-phased', "-t", is_flag=True, help='Identify asymmetric network')
+@click.option('--sequence', "-q", is_flag=True, help='Keep results in zero/positive/negative sequence values')
 @click.option('--equivalent-noise', "-e", is_flag=True, help='Use equivalent noise or recompute at each time step')
 @click.option('--laplacian', "-l", is_flag=True, help='Identify a Laplacian admittance')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
 def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
-             network_sim, noise, three_phased, equivalent_noise, laplacian, verbose):
+             network_sim, noise, three_phased, sequence, equivalent_noise, laplacian, verbose):
 
     # What should be redone and what should be just read
     redo_loads = loads or (not loads and not network_sim and not noise)
@@ -91,9 +93,11 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
         noise_fcn(net, voltage, current, times, conf.simulation.measurement_frequency, conf.simulation.time_steps,
                   noise_params, verbose=verbose)
 
+    if verbose:
+        print("Reducing unobservable or unobserved nodes...")
     # Reducing network
-    idx_todel, y_bus = run3ph.reduce_network(net, voltage, current, hidden_nodes, laplacian) if three_phased \
-        else run.reduce_network(net, voltage, current, hidden_nodes, laplacian)
+    idx_todel, y_bus = run3ph.reduce_network(net, voltage, current, hidden_nodes, laplacian, not sequence) \
+        if three_phased else run.reduce_network(net, voltage, current, hidden_nodes, laplacian)
 
     # Removing reduced nodes
     noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
@@ -101,11 +105,24 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
     voltage = np.delete(voltage, idx_todel, axis=1)
     current = np.delete(current, idx_todel, axis=1)
     pmu_ratings = np.delete(pmu_ratings, idx_todel)
+    phases_idx = np.delete(np.tile([1, 2, 3] if three_phased else [1], len(net.bus.index)), idx_todel)
+
+    if sequence:
+        # TODO: still some diff when subKron reducing, fix it!
+        #print(np.linalg.norm((voltage - np.mean(voltage, axis=0)) @ y_bus - (current - np.mean(current, axis=0)), axis=0))
+        [noisy_voltage, noisy_current, voltage, current] = [measurement_phase_to_sequence(m) for m in
+                                                            [noisy_voltage, noisy_current, voltage, current]]
+        phases_idx = phases_idx-1
+        y_bus = admittance_phase_to_sequence(y_bus)
+        #print(np.linalg.norm((voltage - np.mean(voltage, axis=0)) @ y_bus - (current - np.mean(current, axis=0)), axis=0))
+
+    if verbose:
+        print("Done!")
 
     if verbose:
         print("Saving data...")
     sim_IV = {'i': noisy_current, 'v': noisy_voltage, 'j': current, 'w': voltage,
-              'y': y_bus, 'p': pmu_ratings, 'f': fparam}
+              'y': y_bus, 'p': pmu_ratings, 'f': fparam, 'h': phases_idx}
     np.savez(conf.conf.DATA_DIR / ("simulations_output/" + net.name + ".npz"), **sim_IV)
 
     print(np.mean(np.abs(y_bus[np.abs(y_bus)>0])))

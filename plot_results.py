@@ -10,24 +10,34 @@ from src.identification.utils import plot_heatmap, plot_scatter, plot_series
 
 @click.command()
 @click.option('--network', "-n", default="bolognani56", help='Name of the network to simulate')
-@click.option('--max-plot-y', "-m", default=800, help='Maximum admittance on the plots')
-@click.option('--max-plot-err', "-e", default=50, help='Maximum error on the plots')
-@click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
+@click.option('--max-plot-y', "-m", default=0, help='Maximum admittance on the plots')
+@click.option('--max-plot-err', "-e", default=0, help='Maximum error on the plots')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def plot_results(network, max_plot_y, max_plot_err, laplacian, verbose):
+def plot_results(network, max_plot_y, max_plot_err, verbose):
     if verbose:
         def pprint(a):
             print(a)
     else:
         pprint = lambda a: None
 
+    max_plot_y = max_plot_y if max_plot_y != 0 else None
+    max_plot_err = max_plot_err if max_plot_err != 0 else None
+
     name = network
 
     pprint("Loading network simulation...")
+    sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/reference_results_" + name + ".npz"),
+                       allow_pickle=True)
+    y_bus, phases, laplacian = sim_STLS["y"], sim_STLS["p"], sim_STLS["l"]
+
     sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/" + name + ".npz"))
-    voltage = sim_STLS['w']
-    y_bus = sim_STLS['y']
+    voltage, phases_ids = sim_STLS['w'], sim_STLS['h']
+
+    if phases != "012" and phases != "123":
+        idx_todel = (phases_ids != 1).nonzero()
+        voltage = np.delete(voltage, idx_todel, axis=1)
+
     nodes = voltage.shape[1]
     pprint("Done!")
 
@@ -61,7 +71,9 @@ def plot_results(network, max_plot_y, max_plot_err, laplacian, verbose):
             print(lasso_metrics, file=f)
         plot_heatmap(np.abs(y_lasso), "y_lasso", minval=0, maxval=max_plot_y)
 
-        print("Done!")
+        pprint("Done!")
+    else:
+        pprint("No file found for standard results.")
 
     if os.path.isfile(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz")):
         print("Loading bayesian eiv result...")
@@ -113,6 +125,8 @@ def plot_results(network, max_plot_y, max_plot_err, laplacian, verbose):
             print("MLE", file=f)
             print(error_metrics(2*y_comp[np.invert(y_comp_idx), 3], 2*y_comp[np.invert(y_comp_idx), 4]), file=f)
         pprint("Done!")
+    else:
+        pprint("No file found for Bayesian identification results.")
 
     pprint("Please find the results in the data folder.")
 

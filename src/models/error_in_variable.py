@@ -249,7 +249,7 @@ class BayesianEIVRegression(GridIdentificationModel, MisfitWeightedModel):
             else:
                 cost = db.dot(db) + da.dot(da)
             cost = cost.get() if conf.GPU_AVAILABLE else cost
-            target = cost + self._lambda * penalty
+            target = np.abs(cost + self._lambda * penalty)
             self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, target))
 
             # Check stationarity

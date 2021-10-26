@@ -185,4 +185,5 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
     """
-    # TODO: finish this
+    # TODO: implement 3-phase Bayesian eiv identification
+    raise NotImplementedError("bayesian three phased identification not implemented yet")

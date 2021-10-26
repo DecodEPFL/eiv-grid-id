@@ -55,7 +55,7 @@ class NetData3P(Net):
         elif t == Net.TYPE_PCC:
             assert(np.isscalar(p))
             pp.create_load(self, bus, 0, 0, name=str(i), index=i)
-            pp.create_ext_grid(self, bus, s_sc_max_mva=np.sqrt(p*p + q*q), rx_max=ext_sc_carac['rx'],
+            pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['sc'], rx_max=ext_sc_carac['rx'],
                                r0x0_max=ext_sc_carac['r0x0'], x0x_max=ext_sc_carac['x0x'], max_p_mw=p, max_q_mvar=q)
         return self
 

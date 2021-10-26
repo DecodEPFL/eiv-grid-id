@@ -8,8 +8,8 @@ hidden_nodes = []
 constant_load_hidden_nodes = False
 
 selected_weeks = np.array([12])
-days = len(selected_weeks)
-time_steps = 24 * 60# 15000
+days = len(selected_weeks)*7
+time_steps = 24 * 60 * 7# 15000
 
 current_magnitude_sd = 1e-4
 voltage_magnitude_sd = 1e-4

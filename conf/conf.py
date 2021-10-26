@@ -11,7 +11,7 @@ SIM_DIR = DATA_DIR / "simulations_output"
 
 TEST_SIM_DIR = ROOT_DIR / "test" / "data" / "simulations_output"
 
-np.set_printoptions(threshold=np.inf)
+np.set_printoptions(threshold=np.inf, linewidth=np.inf)
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 500)
 

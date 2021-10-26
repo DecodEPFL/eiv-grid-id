@@ -301,7 +301,7 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
     return noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam
 
 
-def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose=True):
+def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, reduce_single=True, verbose=True):
     """
     # Hidden nodes and nodes with no load and are very hard to estimate.
     # Kron reduction is a technique to obtain an equivalent graph without these nodes.
@@ -315,6 +315,7 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose
     :param current: current measurements (complex T-by-n array)
     :param hidden_nodes: loaded nodes to reduce (nodes with 0 loads will always also be reduced)
     :param laplacian: is the admittance matrix a Laplacian?
+    :param reduce_single: reduce phases separately or keep passive phases in partially active nodes
     :param verbose: verbose ON/OFF
     """
 
@@ -335,6 +336,11 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose
         y_bus = np.delete(np.delete(y_bus, [i, i + 1, i + 2], axis=1), [i, i + 1, i + 2], axis=0)
 
     passive_nodes = net.give_passive_nodes()
+    if not reduce_single:
+        # Reduce only nodes passive on all three phases
+        passive_nodes = np.intersect1d(passive_nodes[0], np.intersect1d(passive_nodes[1], passive_nodes[2]))
+        passive_nodes = (passive_nodes, passive_nodes, passive_nodes)
+
     idx_tored = []
     shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
     for ph in range(3):
