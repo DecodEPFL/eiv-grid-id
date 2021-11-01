@@ -59,6 +59,20 @@ class SmoothPrior(BayesianPrior):
         orders = self._std_weights(orders, values)
         self.gamma = np.concatenate((self.gamma, orders))
 
+    def add_exact_adaptive_prior(self, indices, values, weights=None, orders=2):
+        """
+        Adds a prior centered on an exact value of a parameter
+
+        :param indices: indices of the parameters on which the prior apply
+        :param values: values of the parameters for corresponding indices
+        :param weights: uncertainty on the values: high if weight is low
+        :param orders: order of the log of the distribution (|x|^order)
+        """
+        BayesianPrior.add_exact_prior(self, indices, values, weights)
+
+        orders = self._std_weights(orders, values)
+        self.gamma = np.concatenate((self.gamma, orders))
+
     def add_sparsity_prior(self, indices, weights=None, orders=2):
         """
         Adds a prior centered on zero to some parameters
@@ -144,6 +158,19 @@ class SparseSmoothPrior(SmoothPrior):
         """
         self.L = self.L.toarray()
         SmoothPrior.add_exact_prior(self, indices, values, weights, orders)
+        self.L = sparse.csr_matrix(self.L)
+
+    def add_exact_adaptive_prior(self, indices, values, weights=None, orders=2):
+        """
+        Adds a prior centered on an exact value of a parameter
+
+        :param indices: indices of the parameters on which the prior apply
+        :param values: values of the parameters for corresponding indices
+        :param weights: uncertainty on the values: high if weight is low
+        :param orders: order of the log of the distribution (|x|^order)
+        """
+        self.L = self.L.toarray()
+        SmoothPrior.add_exact_adaptive_prior(self, indices, values, weights, orders)
         self.L = sparse.csr_matrix(self.L)
 
 

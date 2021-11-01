@@ -33,6 +33,34 @@ def build_lasso_prior(nodes, y_ols, laplacian):
     prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
     return prior
 
+def build_loads_id_prior(nodes, y_bus):
+    # Bayesian priors definition
+    """
+    # Generate a prior assuming we know the network perfectly
+    # This can be used as a sanity check or to identify the loads on hidden nodes
+    # But it only works in very rare cases because loads are extremely low p.u. admittances
+
+    :param nodes: size of parameter matrix
+    :param y_bus: exact belief of the admittance matrix
+    """
+    DT = duplication_matrix(nodes)
+    E = elimination_sym_matrix(nodes)
+
+    # Indices of all non-diagonal elements. We do not want to penalize diagonal ones (always non-zero)
+    idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((nodes, nodes))
+                                                                        - np.eye(nodes))) > 0)[0]
+
+    # Make base prior
+    prior = SparseSmoothPrior(smoothness_param=1e-10, n=len(E @ vectorize_matrix(y_bus))*2)
+
+    # Add prior on off-diagonal elements
+    prior.add_exact_prior(indices=idx_offdiag,
+                          values=make_real_vector((E @ vectorize_matrix(y_bus)))[idx_offdiag],
+                          weights=None,
+                          orders=SmoothPrior.LAPLACE)
+
+    return prior
+
 def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
                         use_tls_diag=False, contrast_each_row=True, regularize_diag=False):
     # Bayesian priors definition
@@ -47,7 +75,7 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
     # Another prior inserts actual values for edges around nodes 2, 50 and 51, as well as the edge from 4->40
     # It also includes a small regularization for the nodes belonging to the a chained network prior.
 
-    :param n: size of parameter matrix
+    :param nodes: size of parameter matrix
     :param lambdaprime: relative weight of the non-sparsity priors
     :param y_tls: unregularized parameter estimates
     :param laplacian: is the admittance matrix Laplacian?
@@ -103,10 +131,10 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
         if regularize_diag:
             idx_diag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.eye(nodes))) > 0)[0]
 
-            prior.add_exact_prior(indices=idx_diag,
-                                  values=np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls)))),
-                                  weights=lambdaprime,
-                                  orders=SmoothPrior.LAPLACE)
+            prior.add_exact_adaptive_prior(indices=idx_diag,
+                                           values=np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls)))),
+                                           weights=lambdaprime,
+                                           orders=SmoothPrior.LAPLACE)
 
     else:
         prior.add_contrast_prior(indices=np.vstack(tuple(np.split(idx_offdiag, 2))),
@@ -218,8 +246,8 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
     return y_ols, y_tls, y_lasso
 
 
-def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, laplacian=False, weighted=False, max_iterations=50, verbose=True):
+def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_sd_polar, pmu_ratings,
+                 y_init, y_exact=None, laplacian=False, weighted=False, max_iterations=50, verbose=True):
     # L1 Regularized weighted TLS
     """
     # Computing the Maximum A Posteriori Estimator,
@@ -232,10 +260,12 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     :param name: name of the network (for saves)
     :param voltage: voltage measurements (complex)
     :param current: current measurements (complex)
+    :param phases_ids: Do not use (None), only for overloading with 3 phases
     :param voltage_sd_polar: relative voltage noise standard deviation in polar coordinates (complex)
     :param current_sd_polar: relative current noise standard deviation in polar coordinates (complex)
     :param pmu_ratings: current ratings of the measuring devices
     :param y_init: initial parameters estimate
+    :param y_exact: exact parameters for exact prior, None otherwise
     :param laplacian: is the admittance matrix Laplacian?
     :param weighted: Use covariances or just identity (classical TLS)?
     :param max_iterations: maximum number of lasso iterations
@@ -250,7 +280,10 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
 
     nodes = voltage.shape[1]
 
-    prior = build_complex_prior(nodes, identification.lambdaprime, y_init, laplacian, identification.use_tls_diag,
+    if y_exact is not None:
+        prior = build_loads_id_prior(nodes, y_exact)
+    else:
+        prior = build_complex_prior(nodes, identification.lambdaprime, y_init, laplacian, identification.use_tls_diag,
                                 identification.contrast_each_row, identification.regularize_diag)
     if laplacian:
         sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=identification.lambda_eiv, abs_tol=identification.abs_tol,
@@ -307,7 +340,7 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
 
 def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
             y_mat, laplacian=False, verbose=True):
-    # L1 Regularized weighted TLS
+    # Error covariance analysis
     """
     # Computing the Maximum Likelihood Estimator,
     # based on priors defined previously.
@@ -334,6 +367,7 @@ def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_rati
         pprint = lambda a: None
 
     tls = TotalLeastSquares()
+
 
     if voltage is not None and current is not None:
         pprint("Calculating covariance matrices...")

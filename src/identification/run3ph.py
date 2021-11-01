@@ -1,6 +1,8 @@
 
 import numpy as np
+import scipy
 
+from src.identification import run
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, \
     transformation_matrix, unvectorize_matrix, elimination_sym_matrix, elimination_lap_matrix
 from src.models.regression import ComplexRegression, BayesianRegression
@@ -26,6 +28,34 @@ def build_lasso_prior(nodes, y_ols, E, DT):
 
     prior = SparseSmoothPrior(smoothness_param=0.00001, n=len(E @ vectorize_matrix(y_ols))*2)
     prior.add_adaptive_sparsity_prior(np.arange(prior.n), adaptive_lasso, SmoothPrior.LAPLACE)
+    return prior
+
+
+def build_loads_id_prior(nodes, y_bus):
+    # Bayesian priors definition
+    """
+    # Generate a prior assuming we know the network perfectly
+    # This can be used as a sanity check or to identify the loads on hidden nodes
+    # But it only works in very rare cases because loads are extremely low p.u. admittances
+
+    :param nodes: size of parameter matrix
+    :param y_bus: exact belief of the admittance matrix
+    """
+    nodes = 3*nodes
+    E = elimination_sym_matrix(nodes)
+
+    # Indices of all non-diagonal elements. We do not want to penalize diagonal ones (always non-zero)
+    idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((nodes, nodes)) - np.eye(nodes, k=-1)
+                                                                        - np.eye(nodes) - np.eye(nodes, k=1))) > 0)[0]
+
+    # Make base prior
+    prior = SparseSmoothPrior(smoothness_param=1e-8, n=len(E @ vectorize_matrix(y_bus))*2)
+
+    # Add prior on off-diagonal elements
+    prior.add_exact_prior(indices=idx_offdiag,
+                          values=make_real_vector((E @ vectorize_matrix(y_bus)))[idx_offdiag],
+                          weights=None,
+                          orders=SmoothPrior.LAPLACE)
     return prior
 
 
@@ -162,9 +192,78 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
     return y_ols, y_tls, y_lasso
 
 
-def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, laplacian=False, weighted=False, max_iterations=50, verbose=True):
+def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_sd_polar, pmu_ratings,
+                 y_init, y_exact=None, laplacian=False, weighted=False, max_iterations=50, verbose=True):
     # L1 Regularized weighted TLS
+    """
+    # Computing the Maximum Likelihood Estimator,
+    # based on priors defined previously.
+    # This operation takes long, around 4 minutes per iteration.
+    # The results and details about each iteration are saved after.
+    #
+    # Covariance matrices of currents and voltages are calculated using the average true noise method.
+
+    :param name: name of the network (for saves)
+    :param voltage: voltage measurements (complex)
+    :param current: current measurements (complex)
+    :param phases_ids: indices of the phase for each measurement sequence
+    :param voltage_sd_polar: relative voltage noise standard deviation in polar coordinates (complex)
+    :param current_sd_polar: relative current noise standard deviation in polar coordinates (complex)
+    :param pmu_ratings: current ratings of the measuring devices
+    :param y_init: initial parameters estimate
+    :param y_exact: exact parameters for exact prior, None otherwise
+    :param laplacian: is the admittance matrix Laplacian?
+    :param weighted: Use covariances or just identity (classical TLS)?
+    :param max_iterations: maximum number of lasso iterations
+    :param verbose: verbose ON/OFF
+    """
+    if verbose:
+        def pprint(a):
+            print(a)
+    else:
+        pprint = lambda a: None
+
+    y_fin = np.zeros_like(y_init)
+
+    if np.any(phases_ids == 0):
+        iterations = [None, None, None]
+        for i in range(3):
+            pprint("Identifying sequence " + str(i))
+            mask = np.outer(phases_ids == i, phases_ids == i)
+
+            y_sparse_tls_cov, iterations[i] = \
+                run.bayesian_eiv(name, voltage[:, phases_ids == i], current[:, phases_ids == i], None,
+                                 voltage_sd_polar, current_sd_polar, pmu_ratings[phases_ids == i],
+                                 y_init[phases_ids == i, :][:, phases_ids == i], None if y_exact is None else
+                                 y_exact[phases_ids == i, :][:, phases_ids == i], laplacian, weighted, max_iterations,
+                                 verbose)
+            y_fin[np.outer(phases_ids == i, phases_ids == i)] = y_sparse_tls_cov.flatten()
+
+        sparse_tls_cov_iterations = []
+        for i in range(np.min([len(iterations[0]), len(iterations[1]), len(iterations[2])])):
+            sparse_tls_cov_iterations.append(iterations[0][i])
+            sparse_tls_cov_iterations[i].fitted_parameters = scipy.linalg.block_diag(iterations[0][i].fitted_parameters,
+                                                                                     iterations[1][i].fitted_parameters,
+                                                                                     iterations[2][i].fitted_parameters)
+            sparse_tls_cov_iterations[i].target_function = iterations[0][i].target_function + \
+                                                           iterations[1][i].target_function + \
+                                                           iterations[2][i].target_function
+
+    else:
+        # TODO: implement 3-phase Bayesian eiv identification
+        raise NotImplementedError("bayesian three phased identification is only available for sequence values")
+
+    pprint("Saving final result...")
+    sim_STLS = {'y': y_fin, 'i': sparse_tls_cov_iterations}
+    np.savez(DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"), **sim_STLS)
+    pprint("Done!")
+
+    return y_fin, sparse_tls_cov_iterations
+
+
+def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
+            y_mat, laplacian=False, verbose=True):
+    # Error covariance analysis
     """
     # Computing the Maximum Likelihood Estimator,
     # based on priors defined previously.
@@ -179,11 +278,18 @@ def bayesian_eiv(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu
     :param voltage_sd_polar: relative voltage noise standard deviation in polar coordinates (complex)
     :param current_sd_polar: relative current noise standard deviation in polar coordinates (complex)
     :param pmu_ratings: current ratings of the measuring devices
-    :param y_init: initial parameters estimate
+    :param y_mat: parameters
     :param laplacian: is the admittance matrix Laplacian?
-    :param weighted: Use covariances or just identity (classical TLS)?
-    :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
     """
-    # TODO: implement 3-phase Bayesian eiv identification
-    raise NotImplementedError("bayesian three phased identification not implemented yet")
+
+    if verbose:
+        def pprint(a):
+            print(a)
+    else:
+        pprint = lambda a: None
+
+    tls = TotalLeastSquares()
+
+    pprint("Warning: Error covariance analysis not implemented yet for three phases. Continuing...")
+    return 0, 0, 0

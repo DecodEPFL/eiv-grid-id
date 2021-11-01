@@ -2,6 +2,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pkgutil
+import cupy
 
 seed = 131
 
@@ -18,4 +19,4 @@ pd.set_option('display.max_columns', 500)
 GPU_AVAILABLE = pkgutil.find_loader('cupy')
 # Use this to switch GPU if one is in use.
 # If all GPUs are used you are in bad luck, wait for your turn
-CUDA_DEVICE_USED = 3
+cupy.cuda.Device(3).use()

@@ -47,7 +47,7 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
 
     # How to deal with hidden nodes
     hidden_nodes = conf.simulation.hidden_nodes
-    constant_power_hidden_nodes = conf.simulation.constant_load_hidden_nodes or len(hidden_nodes) == 0
+    constant_load_nodes = hidden_nodes if conf.simulation.constant_load_hidden_nodes else None
     if not laplacian and not three_phased:
         for b in bus_data:
             if b.type == NetType.TYPE_PCC:
@@ -56,10 +56,10 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
     # Make load profiles
     load_params = None
     if redo_loads and gaussian_loads > 0:
-        load_params = (None, None, gaussian_loads, conf.simulation.days, hidden_nodes)
+        load_params = (None, None, gaussian_loads, conf.simulation.days, constant_load_nodes)
     elif os.path.isfile(active_profiles) and os.path.isfile(reactive_profiles) and redo_loads:
         load_params = (active_profiles, reactive_profiles, conf.simulation.selected_weeks,
-                       conf.simulation.days, hidden_nodes)
+                       conf.simulation.days, constant_load_nodes)
     elif redo_loads:
         print("Please provide valid load information")
         exit(0)

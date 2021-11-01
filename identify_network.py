@@ -15,11 +15,13 @@ from src.simulation.lines import admittance_phase_to_sequence, measurement_phase
 @click.option('--continue-id', "-c", is_flag=True, help='Is the matrix laplacian')
 @click.option('--phases', "-p", type=str, default="1", help='Phases or sequences to identify')
 @click.option('--sequence', "-q", is_flag=True, help='Use zero/positive/negative sequence values')
+@click.option('--exact', "-e", is_flag=True, help='Use exact values for prior')
 @click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
 @click.option('--weighted', "-w", is_flag=True, help='Use covariance matrices as weights')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phases, sequence, laplacian, weighted, verbose):
+def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
+             phases, sequence, exact, laplacian, weighted, verbose):
     if verbose:
         def pprint(a):
             print(a)
@@ -82,7 +84,6 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
     # TODO: remove this
     #np.set_printoptions(suppress=True, precision=2)
     #print(y_bus)
-    print(expected_max_rrms*100)
     meaned_volts = voltage-np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
     print(np.sqrt(np.linalg.eigvals(meaned_volts.T @ meaned_volts)))
     # print(np.std(noisy_voltage - voltage, axis=0))
@@ -98,11 +99,15 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
     else:
         y_init = (y_tls + y_tls.T).copy()/2
 
-    y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current,
+    y_exact = y_bus if exact and not laplacian else None
+
+    y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current, phases_ids,
                                                                         voltage_magnitude_sd + 1j*voltage_phase_sd,
                                                                         current_magnitude_sd + 1j*current_phase_sd,
-                                                                        pmu_ratings, y_init, laplacian, weighted,
-                                                                        max_iterations if redo_STLS else 0, verbose)
+                                                                        pmu_ratings, y_init, y_exact, laplacian,
+                                                                        weighted, max_iterations if redo_STLS else 0,
+                                                                        verbose)
+
     if continue_id:
         sparse_tls_cov_iterations = sparse_tls_cov_old_iterations.extend(sparse_tls_cov_iterations)
 
@@ -110,6 +115,13 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
         sim_STLS = {'y': y_sparse_tls_cov, 'i': sparse_tls_cov_iterations}
         np.savez(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"), **sim_STLS)
         pprint("Done!")
+
+    _, _, expected_max_rrms_uncertain = run_fcns.eiv_fim(name, noisy_voltage, noisy_current,
+                                                         voltage_magnitude_sd + 1j * voltage_phase_sd,
+                                                         current_magnitude_sd + 1j * current_phase_sd,
+                                                         pmu_ratings, y_sparse_tls_cov, laplacian, verbose)
+    pprint("Cramer rao bound (exact+approx): " + str(expected_max_rrms*100)
+           + ", " + str(expected_max_rrms_uncertain*100))
 
 if __name__ == '__main__':
     identify()

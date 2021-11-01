@@ -5,6 +5,8 @@ import os.path
 
 from src.models.matrix_operations import vectorize_matrix, elimination_sym_matrix, elimination_lap_matrix
 from src.models.error_metrics import error_metrics, rrms_error
+from src.simulation.lines import admittance_phase_to_sequence, measurement_phase_to_sequence, \
+    admittance_sequence_to_phase, measurement_sequence_to_phase
 import conf.identification
 from src.identification.utils import plot_heatmap, plot_scatter, plot_series
 
@@ -12,9 +14,10 @@ from src.identification.utils import plot_heatmap, plot_scatter, plot_series
 @click.option('--network', "-n", default="bolognani56", help='Name of the network to simulate')
 @click.option('--max-plot-y', "-m", default=0, help='Maximum admittance on the plots')
 @click.option('--max-plot-err', "-e", default=0, help='Maximum error on the plots')
+@click.option('--sequence', "-q", is_flag=True, help='show results using sequences. Only for three phases!')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def plot_results(network, max_plot_y, max_plot_err, verbose):
+def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
     if verbose:
         def pprint(a):
             print(a)
@@ -34,9 +37,17 @@ def plot_results(network, max_plot_y, max_plot_err, verbose):
     sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/" + name + ".npz"))
     voltage, phases_ids = sim_STLS['w'], sim_STLS['h']
 
+    correct_component = lambda x: x
     if phases != "012" and phases != "123":
         idx_todel = (phases_ids != 1).nonzero()
         voltage = np.delete(voltage, idx_todel, axis=1)
+    elif phases == "012" and not sequence:
+        correct_component = admittance_sequence_to_phase
+        voltage = measurement_sequence_to_phase(voltage)
+    elif phases == "123" and sequence:
+        correct_component = admittance_phase_to_sequence
+        voltage = measurement_phase_to_sequence(voltage)
+    y_bus = correct_component(y_bus)
 
     nodes = voltage.shape[1]
     pprint("Done!")
@@ -47,9 +58,9 @@ def plot_results(network, max_plot_y, max_plot_err, verbose):
     if os.path.isfile(conf.conf.DATA_DIR / ("simulations_output/standard_results_" + name + ".npz")):
         pprint("Loading standard estimation methods results...")
         sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/standard_results_" + name + ".npz"))
-        y_ols = sim_STLS['o']
-        y_tls = sim_STLS['t']
-        y_lasso = sim_STLS['l']
+        y_ols = correct_component(sim_STLS['o'])
+        y_tls = correct_component(sim_STLS['t'])
+        y_lasso = correct_component(sim_STLS['l'])
         pprint("Done!")
 
         pprint("Plotting standard estimation methods results...")
@@ -79,13 +90,14 @@ def plot_results(network, max_plot_y, max_plot_err, verbose):
         print("Loading bayesian eiv result...")
         sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"),
                            allow_pickle=True)
-        y_sparse_tls_cov = sim_STLS["y"]
+        y_sparse_tls_cov = correct_component(sim_STLS["y"])
         sparse_tls_cov_iterations = sim_STLS["i"]
         print("Done!")
 
 
         pprint("Plotting bayesian eiv result...")
-        sparse_tls_cov_errors = pd.Series([rrms_error(y_bus, i.fitted_parameters) for i in sparse_tls_cov_iterations])
+        sparse_tls_cov_errors = pd.Series([rrms_error(y_bus, correct_component(i.fitted_parameters))
+                                           for i in sparse_tls_cov_iterations])
         sparse_tls_cov_targets = pd.Series([i.target_function for i in sparse_tls_cov_iterations])
 
         sparse_tls_cov_metrics = error_metrics(y_bus, y_sparse_tls_cov)
