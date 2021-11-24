@@ -1,5 +1,6 @@
 
 import numpy as np
+from scipy.stats import multivariate_normal as mvn
 
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, \
     transformation_matrix, unvectorize_matrix, elimination_sym_matrix, elimination_lap_matrix
@@ -7,7 +8,7 @@ from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, BayesianEIVRegression
 from src.models.noise_transformation import average_true_noise_covariance
 from src.models.smooth_prior import SmoothPrior, SparseSmoothPrior
-from conf.conf import DATA_DIR
+from conf.conf import DATA_DIR, seed
 from conf import identification
 
 
@@ -71,9 +72,6 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
     #
     # y_tls can also be used as a reference for the sum of all elements on a row/column of Y: contrast prior
     # To stay consistent with the adaptive Lasso weights, these sums are also normalized by |diag(y_tls)|
-    #
-    # Another prior inserts actual values for edges around nodes 2, 50 and 51, as well as the edge from 4->40
-    # It also includes a small regularization for the nodes belonging to the a chained network prior.
 
     :param nodes: size of parameter matrix
     :param lambdaprime: relative weight of the non-sparsity priors
@@ -145,13 +143,113 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
     return prior
 
 
-def standard_methods(name, voltage, current, laplacian=False, max_iterations=10, verbose=True):
+def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, optimal=True):
+    # Bayesian priors definition
+    """
+    # Adds a prior using the exact parameters to another prior
+    #
+    # It inserts actual values for edges around nodes 2, 50 and 51, as well as the edge from 4->40 in optimal is true.
+    # Otherwise, it inserts actual values for edges around nodes 1 and 11, as well as the edge from 4->5
+
+    :param nodes: size of parameter matrix
+    :param prior: original prior to add information to
+    :param lambdaprime: relative weight of the priors
+    :param y_bus: exact parameter knowledge
+    :param laplacian: is the admittance matrix Laplacian?
+    :param optimal: use knowledge that is the most helpful for identification or arbitrary/random one
+    """
+    if laplacian:
+        DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
+        E = elimination_lap_matrix(nodes) @ elimination_sym_matrix(nodes)
+    else:
+        DT = duplication_matrix(nodes)
+        E = elimination_sym_matrix(nodes)
+
+    # Adding prior information from measurements
+    tls_bus_weights = np.zeros_like(y_bus)
+    tls_bus_centers = np.zeros_like(y_bus)
+
+    if optimal:
+        # Node 2
+        tls_bus_weights[0, :], tls_bus_weights[:, 0] = (1+1j), (1+1j)
+        tls_bus_weights[0, 0] = 0
+        tls_bus_centers[0, :], tls_bus_centers[:, 0] = 0, 0
+        tls_bus_centers[1, 0], tls_bus_centers[0, 1] = y_bus[1, 0], y_bus[0, 1]
+        #tls_bus_centers[1, 2], tls_bus_centers[2, 1] = y_bus[1, 2], y_bus[2, 1]
+
+        # Node 50 & 51
+        tls_bus_weights[26, :], tls_bus_weights[:, 26] = (1+1j), (1+1j)
+        tls_bus_weights[25, :], tls_bus_weights[:, 25] = (1+1j), (1+1j)
+        tls_bus_weights[26, 26] = 0
+        tls_bus_weights[25, 25] = 0
+        tls_bus_centers[26, :], tls_bus_centers[:, 26] = 0, 0
+        tls_bus_centers[25, :], tls_bus_centers[:, 25] = 0, 0
+        tls_bus_centers[24, 25], tls_bus_centers[25, 24] = y_bus[24, 25], y_bus[25, 24]
+        tls_bus_centers[26, 25], tls_bus_centers[25, 26] = y_bus[26, 25], y_bus[25, 26]
+        tls_bus_centers[26, 27], tls_bus_centers[27, 26] = y_bus[26, 27], y_bus[27, 26]
+        tls_bus_centers[26, 28], tls_bus_centers[28, 26] = y_bus[26, 28], y_bus[28, 26]
+
+        # line 5->9
+        #tls_bus_weights[3, 36], tls_bus_weights[36, 3] = (1+1j), (1+1j)
+        #tls_bus_centers[3, 36], tls_bus_centers[36, 3] = y_bus[3, 36], y_bus[36, 3]
+        #tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
+        #tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
+
+    else:
+        # Node 10
+        tls_bus_weights[7, :], tls_bus_weights[:, 7] = (1+1j), (1+1j)
+        tls_bus_weights[7, 7] = 0
+        tls_bus_centers[7, :], tls_bus_centers[:, 7] = 0, 0
+        tls_bus_centers[7, 6], tls_bus_centers[6, 7] = y_bus[7, 6], y_bus[6, 7]
+        tls_bus_centers[7, 8], tls_bus_centers[8, 7] = y_bus[7, 8], y_bus[8, 7]
+
+        # Node 36 & 37
+        tls_bus_weights[21, :], tls_bus_weights[:, 21] = (1+1j), (1+1j)
+        tls_bus_weights[20, :], tls_bus_weights[:, 20] = (1+1j), (1+1j)
+        tls_bus_weights[21, 21] = 0
+        tls_bus_weights[20, 20] = 0
+        tls_bus_centers[21, :], tls_bus_centers[:, 21] = 0, 0
+        tls_bus_centers[20, :], tls_bus_centers[:, 20] = 0, 0
+        tls_bus_centers[19, 20], tls_bus_centers[20, 19] = y_bus[19, 20], y_bus[20, 19]
+        tls_bus_centers[21, 20], tls_bus_centers[20, 21] = y_bus[21, 20], y_bus[20, 21]
+        tls_bus_centers[21, 22], tls_bus_centers[22, 21] = y_bus[21, 22], y_bus[22, 21]
+
+        # line 4->40
+        #tls_bus_weights[3, 36], tls_bus_weights[36, 3] = (1+1j), (1+1j)
+        #tls_bus_centers[3, 36], tls_bus_centers[36, 3] = y_bus[3, 36], y_bus[36, 3]
+        #tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
+        #tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
+
+    # Vectorize and add to the rest
+    tls_bus_weights = np.where(np.abs(make_real_vector(E @ vectorize_matrix(tls_bus_weights))) > 0)[0]
+    tls_bus_centers = make_real_vector(E @ vectorize_matrix(tls_bus_centers))
+
+    prior.add_exact_adaptive_prior(indices=tls_bus_weights,
+                                   values=tls_bus_centers[tls_bus_weights],
+                                   weights=lambdaprime,
+                                   orders=SmoothPrior.LAPLACE)
+
+    """
+    for i in range(tls_weights_sum.shape[0]):
+        if tls_bus_weights[i] != 0:
+            # Uncomment to introduce the measurements
+            # tls_weights_sum[i, :] = 0
+            # tls_weights_sum[i, i] = 100*tls_bus_weights[i]
+            # tls_centers_sum[i] = tls_weights_sum[i, i] * tls_bus_centers[i]
+            pass
+    """
+
+    return prior
+
+
+def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, max_iterations=10, verbose=True):
     """
     # Performing the ordinary least squares, total least squares, and lasso indentifications of the network.
 
     :param name: name of the network (for saves)
     :param voltage: voltage measurements (complex)
     :param current: current measurements (complex)
+    :param phases_ids: Do not use (None), only for overloading with 3 phases
     :param laplacian: is the admittance matrix Laplacian?
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
@@ -280,11 +378,13 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
 
     nodes = voltage.shape[1]
 
+    prior = build_complex_prior(nodes, identification.lambdaprime, y_init, laplacian, identification.use_tls_diag,
+                            identification.contrast_each_row, identification.regularize_diag)
+
     if y_exact is not None:
-        prior = build_loads_id_prior(nodes, y_exact)
-    else:
-        prior = build_complex_prior(nodes, identification.lambdaprime, y_init, laplacian, identification.use_tls_diag,
-                                identification.contrast_each_row, identification.regularize_diag)
+        prior = add_known_lines(nodes, prior, identification.lambdaprime, y_exact, laplacian=False, optimal=False)
+        #prior = build_loads_id_prior(nodes, y_exact)  # Not working!
+
     if laplacian:
         sparse_tls_cov = BayesianEIVRegression(prior, lambda_value=identification.lambda_eiv, abs_tol=identification.abs_tol,
                                                rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
@@ -339,7 +439,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
 
 
 def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-            y_mat, laplacian=False, verbose=True):
+            y_mat, n_samples=10000, laplacian=False, verbose=True):
     # Error covariance analysis
     """
     # Computing the Maximum Likelihood Estimator,
@@ -356,6 +456,7 @@ def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_rati
     :param current_sd_polar: relative current noise standard deviation in polar coordinates (complex)
     :param pmu_ratings: current ratings of the measuring devices
     :param y_mat: parameters
+    :param n_samples: number of samples for the error distribution (to compute the variance of the error norm)
     :param laplacian: is the admittance matrix Laplacian?
     :param verbose: verbose ON/OFF
     """
@@ -366,8 +467,11 @@ def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_rati
     else:
         pprint = lambda a: None
 
-    tls = TotalLeastSquares()
+    if n_samples is None:
+        n_samples = 10000
 
+    np.random.seed(seed)
+    tls = TotalLeastSquares()
 
     if voltage is not None and current is not None:
         pprint("Calculating covariance matrices...")
@@ -390,7 +494,10 @@ def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_rati
         pprint("Done!")
 
         pprint("Saving final result...")
-        err_std = np.sqrt(np.linalg.norm(cov))/np.linalg.norm(make_real_vector(vectorize_matrix(y_mat)))
+        # Sampling error probability distribution to find expected error numerically
+        y = make_real_vector(vectorize_matrix(y_mat))
+        samples = np.random.multivariate_normal(y, np.real(cov), n_samples, check_valid='ignore')
+        err_std = np.std(np.linalg.norm(samples - y[None, :], axis=1))/np.linalg.norm(y)
 
         sim_STLS = {'y': y_mat, 'v': voltage, 'i': current, 'f': fim, 'c': cov, 'e': err_std}
         np.savez(DATA_DIR / ("simulations_output/fim_results_" + name + ".npz"), **sim_STLS)

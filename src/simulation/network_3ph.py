@@ -87,6 +87,16 @@ class NetData3P(Net):
                 self.create_line(l.start_bus, l.end_bus, l.length, l.t)
         return self
 
+    def create_lines_from_ybus(self, y_bus: np.array):
+        """
+        Adds lines to the network to recreate a given admittance matrix
+        elements are ordered the same way as bus.index
+
+        :param ls: list of LineData objects to add
+        :return: self network for chained calls
+        """
+        raise NotImplementedError("Creating lines from ybus not implemented for three phases network.")
+
     def make_y_bus(self) -> np.array:
         """
         Makes the admittance matrix of the network

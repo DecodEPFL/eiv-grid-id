@@ -50,7 +50,25 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         beta_reshaped = beta.copy() if beta.shape[1] > 1 else beta.flatten()
         self._admittance_matrix = beta_reshaped
 
-    def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, y_cov: np.array, y_mat: np.array):
+    def fisher_info(self, x: np.array, z: np.array, x_cov: np.array, z_cov: np.array, y_mat: np.array):
+        """
+        Computes the fisher information matrix and the covariance.
+        It is done using a W matrix of 1/(y.T x_cov_i y + z_cov_i) weights and use it in the form of x.T W x.
+
+        We can just take the inverse of W' built from y.T x_cov_i y + z_cov_i,
+        because there are no correlations between samples.
+        Hence, it is a block diagonal and the inverse is equivalent to 1/blocks.
+
+        This is made for block 2x2 covariances with diagonal blocks.
+        Off-diagonal elements of covariances are 1e-10 times smaller so could just consider w2=0.
+
+        :param x: variables of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param z: output of the system as T-by-n matrix of row measurement vectors as numpy array
+        :param x_cov: covariance matrix of vec(x)
+        :param z_cov: covariance matrix of vec(z)
+        :param y_mat: matrix satisfying z = x @ y_mat
+        :return: tuple of FIM and cov matrices
+        """
 
         # Initialization of parameters
         if conf.GPU_AVAILABLE:
@@ -76,8 +94,8 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
         # Use covariances if provided but transform them into sparse
         if x_cov is not None:
             x_cov = sp.csr_matrix(x_cov, dtype=cp.float64)
-        if y_cov is not None:
-            y_cov = sp.csr_matrix(y_cov, dtype=cp.float64)
+        if z_cov is not None:
+            z_cov = sp.csr_matrix(z_cov, dtype=cp.float64)
 
         # Create matrices to fill
         den = cp.empty((2 * n, 2 * n, samples))
@@ -88,17 +106,24 @@ class TotalLeastSquares(GridIdentificationModel, UnweightedModel):
 
         bigy = sp.kron(sp.eye(samples, dtype=cp.float64), y[:, None], format='csr')
         Ws = bigy.T @ sp.kron(perm @ x_cov @ perm.T, sp.eye(n, dtype=cp.float64)) @ bigy
-        Ws = (perm.T @ sp.kron(sp.eye(2*n, dtype=cp.float64), Ws) @ perm) + y_cov
+        Ws = (perm.T @ sp.kron(sp.eye(2*n, dtype=cp.float64), Ws) @ perm) + z_cov
 
-        # TODO: Have to assume no correlation <=> linearize power flow : w2 is 0
+        #inverse of W
         w1 = Ws[:, n*samples:][n*samples:, :].diagonal()
-        w2 = 0*Ws[:, n*samples:][:n*samples, :].diagonal()
+        w2 = Ws[:, n*samples:][:n*samples, :].diagonal()
         w3 = Ws[:, :n*samples][:n*samples, :].diagonal()
         w1i = sp.diags(1 / (w1 - w2 * (w2 / w3)))
         w3i = sp.diags(1 / (w3 - w2 * (w2 / w1)))
-        w2i = None # sp.diags(-((w2 * w1i) / w3))
+        w2i = sp.diags(-((w2 * w1i) / w3))
+        #F = (A.T @ sp.bmat([[w1i, w2i], [w2i, w3i]], format='csr') @ A).toarray()
 
-        F = (A.T @ sp.bmat([[w1i, w2i], [w2i, w3i]], format='csr') @ A).toarray()
+        del A
+        del x_cov
+        del z_cov
+        Ar = sp.kron(sp.eye(n, dtype=cp.float64), cp.real(x), format='csr')
+        Ai = sp.kron(sp.eye(n, dtype=cp.float64), cp.imag(x), format='csr')
+        F = sp.bmat([[Ar.T @ w1i @ Ar, Ar.T @ w2i @ Ai], [Ai.T @ w2i @ Ar, Ai.T @ w3i @ Ai]], format='csr').toarray()
+
         return F.get() if conf.GPU_AVAILABLE else F, cp.linalg.inv(F).get() if conf.GPU_AVAILABLE else cp.linalg.inv(F)
 
 

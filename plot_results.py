@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import os.path
 
-from src.models.matrix_operations import vectorize_matrix, elimination_sym_matrix, elimination_lap_matrix
+from src.models.matrix_operations import vectorize_matrix, elimination_sym_matrix, elimination_lap_matrix, \
+    unvectorize_matrix, make_complex_vector
 from src.models.error_metrics import error_metrics, rrms_error
 from src.simulation.lines import admittance_phase_to_sequence, measurement_phase_to_sequence, \
     admittance_sequence_to_phase, measurement_sequence_to_phase
@@ -26,6 +27,7 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
 
     max_plot_y = max_plot_y if max_plot_y != 0 else None
     max_plot_err = max_plot_err if max_plot_err != 0 else None
+    min_plot = 0
 
     name = network
 
@@ -52,8 +54,10 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
     nodes = voltage.shape[1]
     pprint("Done!")
 
-    plot_series(np.log10(np.std(voltage, axis=0)).reshape((nodes, 1)), 'correlations', s=3, colormap='blue2')
-    plot_heatmap(np.abs(y_bus), "y_bus", minval=0, maxval=max_plot_y)
+    meaned_volts = voltage-np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
+    plot_series(np.log10(np.sqrt(np.abs(np.linalg.eigvals(meaned_volts.T @ meaned_volts)))).reshape((nodes, 1)),
+                'correlations', s=3, colormap='blue2')  # np.std(voltage, axis=0) shows SNR
+    plot_heatmap(np.abs(y_bus), "y_bus", minval=min_plot, maxval=max_plot_y)
 
     if os.path.isfile(conf.conf.DATA_DIR / ("simulations_output/standard_results_" + name + ".npz")):
         pprint("Loading standard estimation methods results...")
@@ -68,19 +72,20 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
         print(ols_metrics)
         with open(conf.conf.DATA_DIR / 'ols_error_metrics.txt', 'w') as f:
             print(ols_metrics, file=f)
-        plot_heatmap(np.abs(y_ols), "y_ols", minval=0, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_ols), "y_ols", minval=min_plot, maxval=max_plot_y)
 
         tls_metrics = error_metrics(y_bus, y_tls)
         print(tls_metrics)
         with open(conf.conf.DATA_DIR / 'tls_error_metrics.txt', 'w') as f:
             print(tls_metrics, file=f)
-        plot_heatmap(np.abs(y_tls), "y_tls", minval=0, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_tls), "y_tls", minval=min_plot, maxval=max_plot_y)
+        np.set_printoptions(suppress=True, precision=2)
 
         lasso_metrics = error_metrics(y_bus, y_lasso)
         print(lasso_metrics)
         with open(conf.conf.DATA_DIR / 'lasso_error_metrics.txt', 'w') as f:
             print(lasso_metrics, file=f)
-        plot_heatmap(np.abs(y_lasso), "y_lasso", minval=0, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_lasso), "y_lasso", minval=min_plot, maxval=max_plot_y)
 
         pprint("Done!")
     else:
@@ -104,8 +109,8 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
         with open(conf.conf.DATA_DIR / 'sparse_tls_error_metrics.txt', 'w') as f:
             print(sparse_tls_cov_metrics, file=f)
         print(sparse_tls_cov_metrics)
-        plot_heatmap(np.abs(y_sparse_tls_cov), "y_sparse_tls_cov", minval=0, maxval=max_plot_y)
-        plot_heatmap(np.abs(y_sparse_tls_cov - y_bus), "y_sparse_tls_cov_errors", minval=0, maxval=max_plot_err)
+        plot_heatmap(np.abs(y_sparse_tls_cov), "y_sparse_tls_cov", minval=min_plot, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_sparse_tls_cov - y_bus), "y_sparse_tls_cov_errors", minval=min_plot, maxval=max_plot_err)
 
         plot_series(np.expand_dims(sparse_tls_cov_errors.to_numpy(), axis=1), 'errors', s=3, colormap='blue2')
         plot_series(np.expand_dims(sparse_tls_cov_targets[1:].to_numpy(), axis=1), 'targets', s=3, colormap='blue2')
@@ -139,6 +144,30 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
         pprint("Done!")
     else:
         pprint("No file found for Bayesian identification results.")
+
+    if os.path.isfile(conf.conf.DATA_DIR / ("simulations_output/uncertainty_results_" + name + ".npz")):
+        pprint("Loading uncertainty results...")
+        sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/uncertainty_results_" + name + ".npz"))
+        w, v = np.linalg.eig(sim_STLS['e'])
+        cov_wtls = unvectorize_matrix(make_complex_vector(v @ np.sqrt(w) / nodes), (nodes, nodes))
+        w, v = np.linalg.eig(sim_STLS['b'])
+        cov_est = unvectorize_matrix(make_complex_vector(v @ np.sqrt(w) / nodes), (nodes, nodes))
+        pprint("Done!")
+
+        pprint("Plotting standard estimation methods results...")
+        plot_heatmap(np.abs(y_tls - y_bus), "tls_errors", minval=min_plot, maxval=max_plot_err)
+
+        cov_metrics = error_metrics(y_tls - y_bus, cov_wtls)
+        print(cov_metrics)
+        plot_heatmap(cov_wtls, "tls_cov", minval=min_plot, maxval=max_plot_err)
+
+        est_cov_metrics = error_metrics(y_tls - y_bus, cov_est)
+        print(est_cov_metrics)
+        plot_heatmap(cov_est, "tls_cov_est", minval=min_plot, maxval=max_plot_err)
+
+        pprint("Done!")
+    else:
+        pprint("No file found for standard results.")
 
     pprint("Please find the results in the data folder.")
 

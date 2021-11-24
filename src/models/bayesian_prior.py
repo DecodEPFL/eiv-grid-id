@@ -66,7 +66,7 @@ class BayesianPrior(object):
         for i in range(len(indices)):
             added_L[i, indices[i]] = weights[i] / values[i]
 
-            self.L = np.vstack((self.L, added_L))
+        self.L = np.vstack((self.L, added_L))
 
     def add_sparsity_prior(self, indices, weights=None):
         """

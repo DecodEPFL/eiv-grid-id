@@ -3,6 +3,7 @@ import numpy as np
 import scipy
 
 from src.identification import run
+from src.models.abstract_models import IterationStatus
 from src.models.matrix_operations import make_real_vector, vectorize_matrix, duplication_matrix, \
     transformation_matrix, unvectorize_matrix, elimination_sym_matrix, elimination_lap_matrix
 from src.models.regression import ComplexRegression, BayesianRegression
@@ -85,16 +86,18 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
     # TODO: finish this
 
 
-def standard_methods(name, voltage, current, laplacian=False, max_iterations=10, verbose=True):
+def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, max_iterations=10, verbose=True):
     """
     # Performing the ordinary least squares, total least squares, and lasso indentifications of the network.
 
     :param name: name of the network (for saves)
     :param voltage: voltage measurements (complex)
     :param current: current measurements (complex)
+    :param phases_ids: if not None, perform identification sequence per sequence or phase per phase
     :param laplacian: is the admittance matrix Laplacian?
     :param max_iterations: maximum number of lasso iterations
     :param verbose: verbose ON/OFF
+    :param phase_ids: if sequence
     """
 
     if verbose:
@@ -105,76 +108,92 @@ def standard_methods(name, voltage, current, laplacian=False, max_iterations=10,
 
     if voltage is not None and current is not None:
         nodes = voltage.shape[1]
-        if laplacian:
-            DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
-            E = elimination_lap_matrix(nodes) @ elimination_sym_matrix(nodes)
-        else:
-            DT = duplication_matrix(nodes)
-            E = elimination_sym_matrix(nodes)
 
-        noisy_voltage = voltage.copy()
-        noisy_current = current.copy()
-        if laplacian:
-            noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
-        else:
-            noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
-            noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
+        if phases_ids is None:
+            if laplacian:
+                DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
+                E = elimination_lap_matrix(nodes) @ elimination_sym_matrix(nodes)
+            else:
+                DT = duplication_matrix(nodes)
+                E = elimination_sym_matrix(nodes)
 
-        # OLS Identification
-        """
-        # Performing the ordinary least squares indentification of the network.
-        # The problem is unweighted and the solution is not sparse.
-        # It does not take error in variables into account.
-        """
+            noisy_voltage = voltage.copy()
+            noisy_current = current.copy()
+            if laplacian:
+                noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
+            else:
+                noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
+                noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
 
-        pprint("OLS identification...")
-        ols = ComplexRegression()
-        ols.fit(noisy_voltage, noisy_current)
-        y_ols = ols.fitted_admittance_matrix
-        pprint("Done!")
+            # OLS Identification
+            """
+            # Performing the ordinary least squares indentification of the network.
+            # The problem is unweighted and the solution is not sparse.
+            # It does not take error in variables into account.
+            """
 
-        # TLS Identification
-        """
-        # Performing the total least squares indentification of the network.
-        # The problem is unweighted and the solution is not sparse.
-        # It is however a good initial guess for future identifications.
-        """
-
-        pprint("TLS identification...")
-        tls = TotalLeastSquares()
-        tls.fit(noisy_voltage, noisy_current)
-        y_tls = tls.fitted_admittance_matrix
-        pprint("Done!")
-
-        # Adaptive Lasso
-        """
-        # Computing the Lasso estimate based on a Bayesian prio and the OLS solution.
-        # w_{i->k} = lambda / y_ols_{i->k} for adaptive Lasso weights.
-        """
-
-        # Create adaptive Lasso penalty
-        prior = build_lasso_prior(nodes, y_ols, E, DT)
-
-        if laplacian:
-            lasso = BayesianRegression(prior, lambda_value=identification.lambda_lasso, abs_tol=identification.abs_tol,
-                                       rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
-                                       dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
-                                       e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
-        else:
-            lasso = BayesianRegression(prior, lambda_value=identification.lambda_lasso, abs_tol=identification.abs_tol,
-                                       rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
-                                       dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
-
-        if max_iterations > 0:
-            # Get or create starting data
-            y_lasso = (y_ols + y_ols.T).copy() / 2
-
-            pprint("Lasso identification...")
-            lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
-            y_lasso = lasso.fitted_admittance_matrix
+            pprint("OLS identification...")
+            ols = ComplexRegression()
+            ols.fit(noisy_voltage, noisy_current)
+            y_ols = ols.fitted_admittance_matrix
             pprint("Done!")
+
+            # TLS Identification
+            """
+            # Performing the total least squares indentification of the network.
+            # The problem is unweighted and the solution is not sparse.
+            # It is however a good initial guess for future identifications.
+            """
+
+            pprint("TLS identification...")
+            tls = TotalLeastSquares()
+            tls.fit(noisy_voltage, noisy_current)
+            y_tls = tls.fitted_admittance_matrix
+            pprint("Done!")
+
+            # Adaptive Lasso
+            """
+            # Computing the Lasso estimate based on a Bayesian prio and the OLS solution.
+            # w_{i->k} = lambda / y_ols_{i->k} for adaptive Lasso weights.
+            """
+
+            # Create adaptive Lasso penalty
+            prior = build_lasso_prior(nodes, y_ols, E, DT)
+
+            if laplacian:
+                lasso = BayesianRegression(prior, lambda_value=identification.lambda_lasso, abs_tol=identification.abs_tol,
+                                           rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
+                                           dt_matrix_builder=(lambda n: duplication_matrix(n) @ transformation_matrix(n)),
+                                           e_matrix_builder=(lambda n: elimination_lap_matrix(n) @ elimination_sym_matrix(n)))
+            else:
+                lasso = BayesianRegression(prior, lambda_value=identification.lambda_lasso, abs_tol=identification.abs_tol,
+                                           rel_tol=identification.rel_tol, max_iterations=max_iterations, verbose=verbose,
+                                           dt_matrix_builder=duplication_matrix, e_matrix_builder=elimination_sym_matrix)
+
+            if max_iterations > 0:
+                # Get or create starting data
+                y_lasso = (y_ols + y_ols.T).copy() / 2
+
+                pprint("Lasso identification...")
+                lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
+                y_lasso = lasso.fitted_admittance_matrix
+                pprint("Done!")
+            else:
+                y_lasso = y_ols
+
         else:
-            y_lasso = y_ols
+            y_ols = np.zeros_like(voltage[:2, :].T @ voltage[:2, :])
+            y_tls, y_lasso = y_ols.copy(), y_ols.copy()
+            for i in range(3):
+                pprint("Identifying phase/sequence " + str(i))
+
+                y_ols_i, y_tls_i, y_lasso_i = \
+                    run.standard_methods(name, voltage[:, phases_ids == i], current[:, phases_ids == i], None,
+                                         laplacian, max_iterations, verbose)
+
+                y_ols[np.outer(phases_ids == i, phases_ids == i)] = y_ols_i.flatten()
+                y_tls[np.outer(phases_ids == i, phases_ids == i)] = y_tls_i.flatten()
+                y_lasso[np.outer(phases_ids == i, phases_ids == i)] = y_lasso_i.flatten()
 
         pprint("Saving standard results...")
         sim_ST = {'o': y_ols, 't': y_tls, 'l': y_lasso}
@@ -206,7 +225,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
     :param name: name of the network (for saves)
     :param voltage: voltage measurements (complex)
     :param current: current measurements (complex)
-    :param phases_ids: indices of the phase for each measurement sequence
+    :param phases_ids: indices of the phase or sequence for each measurement sequence
     :param voltage_sd_polar: relative voltage noise standard deviation in polar coordinates (complex)
     :param current_sd_polar: relative current noise standard deviation in polar coordinates (complex)
     :param pmu_ratings: current ratings of the measuring devices
@@ -228,8 +247,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
     if np.any(phases_ids == 0):
         iterations = [None, None, None]
         for i in range(3):
-            pprint("Identifying sequence " + str(i))
-            mask = np.outer(phases_ids == i, phases_ids == i)
+            pprint("Identifying phase/sequence " + str(i))
 
             y_sparse_tls_cov, iterations[i] = \
                 run.bayesian_eiv(name, voltage[:, phases_ids == i], current[:, phases_ids == i], None,
@@ -241,13 +259,12 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
 
         sparse_tls_cov_iterations = []
         for i in range(np.min([len(iterations[0]), len(iterations[1]), len(iterations[2])])):
-            sparse_tls_cov_iterations.append(iterations[0][i])
-            sparse_tls_cov_iterations[i].fitted_parameters = scipy.linalg.block_diag(iterations[0][i].fitted_parameters,
-                                                                                     iterations[1][i].fitted_parameters,
-                                                                                     iterations[2][i].fitted_parameters)
-            sparse_tls_cov_iterations[i].target_function = iterations[0][i].target_function + \
-                                                           iterations[1][i].target_function + \
-                                                           iterations[2][i].target_function
+            sparse_tls_cov_iterations.append(IterationStatus(i, np.zeros_like(y_fin), 0.0))
+            for p in range(3):
+                sparse_tls_cov_iterations[i].fitted_parameters[np.outer(phases_ids == p, phases_ids == p)] = \
+                    iterations[p][i].fitted_parameters.flatten()
+                sparse_tls_cov_iterations[i].target_function = sparse_tls_cov_iterations[i].target_function + \
+                    iterations[p][i].target_function
 
     else:
         # TODO: implement 3-phase Bayesian eiv identification
@@ -262,7 +279,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
 
 
 def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_ratings,
-            y_mat, laplacian=False, verbose=True):
+            y_mat, y_mle, laplacian=False, verbose=True):
     # Error covariance analysis
     """
     # Computing the Maximum Likelihood Estimator,

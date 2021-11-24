@@ -4,18 +4,28 @@ from conf import conf
 from src.simulation.simulation_3ph import SimulatedNet3P
 from src.simulation.load_profile import load_profile_from_numpy
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
+from src.simulation import net_templates_3ph
+from src.simulation.net_templates_3ph import ieee123_types
 
-def make_net(name, line_types, bus_data, line_data):
-    if bus_data is None:
-        return
 
-    if line_data is None:
-        return
+def make_net(name, y_bus=None):
+    # Network
+    """
+    # Creates network from template parameters in src.simulation.net_templates_3ph
 
-    net = SimulatedNet3P(line_types, bus_data, line_data)
+    :param name: Name of the network
+    :param y_bus: Create network from admittance matrix instead of line parameters
+    """
+
+    bus_data = getattr(net_templates_3ph, str(name) + "_bus")
+    line_data = getattr(net_templates_3ph, str(name) + "_net") if y_bus is None else []
+
+    net = SimulatedNet3P(ieee123_types, bus_data, line_data)
+    if y_bus is not None:
+        net.create_lines_from_ybus(y_bus)
     net.name = name
 
-    return net
+    return net, bus_data, line_data
 
 def generate_loads(net, load_params=None, verbose=True):
     # Load profiles
@@ -58,7 +68,7 @@ def generate_loads(net, load_params=None, verbose=True):
                                                      load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None,
                                                      verbose=verbose)
 
-            print("Asymmetric loads")
+            pprint("Asymmetric loads")
             load_asym = load_profile_from_numpy(active_file=active_file,
                                                 reactive_file=reactive_file,
                                                 skip_header=selected_weeks * 7 * 24 * 60,
@@ -125,7 +135,7 @@ def generate_loads(net, load_params=None, verbose=True):
                     load_asym[4][:, i] = net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
                     load_asym[5][:, i] = net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
 
-        print("Saving loads...")
+        pprint("Saving loads...")
         sim_PQ = {'p': load_p, 'q': load_q, 'a': load_asym, 't': times}
         np.savez(conf.DATA_DIR / ("simulations_output/sim_loads_" + net.name + ".npz"), **sim_PQ)
         pprint("Done!")
@@ -133,7 +143,7 @@ def generate_loads(net, load_params=None, verbose=True):
         pprint("Loading loads...")
         sim_PQ = np.load(conf.DATA_DIR / ("simulations_output/sim_loads_" + net.name + ".npz"))
         load_p, load_q, load_asym, times = sim_PQ["p"], sim_PQ["q"], sim_PQ["a"], sim_PQ["t"]
-        print("Done!")
+        pprint("Done!")
 
     return load_p, load_q, load_asym, times
 
@@ -278,13 +288,13 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
                                                            std_m=mg_stds, std_p=ph_stds,
                                                            noise_fcn=add_polar_noise_to_measurement,
-                                                           verbose=True), 2, axis=1))
+                                                           verbose=verbose), 2, axis=1))
 
         voltage, current = \
             tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
                                                            std_m=None, std_p=None, noise_fcn=None,
-                                                           verbose=True), 2, axis=1))
+                                                           verbose=verbose), 2, axis=1))
         pprint("Done!")
 
         pprint("Saving filtered data...")
@@ -327,7 +337,7 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, reduce_
 
     y_bus = net.make_y_bus()
 
-    print("Kron reducing loads with no current...")
+    pprint("Kron reducing loads with no current...")
     idx_todel = []
     # subKron reducing the ext_grid
     for idx in net.ext_grid.bus.values:
@@ -354,8 +364,8 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, reduce_
     y_bus = net.kron_reduction(idx_tored, y_bus + np.diag(shunts))
     idx_todel.extend(idx_tored)
 
-    print("Done!")
-    print("reduced elements: " + str(np.array(idx_todel) + 1))
+    pprint("Done!")
+    pprint("reduced elements: " + str(np.array(idx_todel) + 1))
 
     return idx_todel, y_bus
 

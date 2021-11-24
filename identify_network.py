@@ -18,10 +18,11 @@ from src.simulation.lines import admittance_phase_to_sequence, measurement_phase
 @click.option('--exact', "-e", is_flag=True, help='Use exact values for prior')
 @click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
 @click.option('--weighted', "-w", is_flag=True, help='Use covariance matrices as weights')
+@click.option('--uncertainty', "-u", is_flag=True, help='Analyse error covariance')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
 def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
-             phases, sequence, exact, laplacian, weighted, verbose):
+             phases, sequence, exact, laplacian, weighted, uncertainty, verbose):
     if verbose:
         def pprint(a):
             print(a)
@@ -74,20 +75,8 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
     current_phase_sd = simulation.current_phase_sd/np.sqrt(fparam)
 
     y_ols, y_tls, y_lasso = run_fcns.standard_methods(name, noisy_voltage if redo_standard_methods else None,
-                                                      noisy_current, laplacian, max_iterations, verbose)
-
-    fim_wtls, cov_wtls, expected_max_rrms = run_fcns.eiv_fim(name, voltage, current,
-                                                             voltage_magnitude_sd + 1j * voltage_phase_sd,
-                                                             current_magnitude_sd + 1j * current_phase_sd,
-                                                             pmu_ratings, y_bus, laplacian, verbose)
-
-    # TODO: remove this
-    #np.set_printoptions(suppress=True, precision=2)
-    #print(y_bus)
-    meaned_volts = voltage-np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
-    print(np.sqrt(np.linalg.eigvals(meaned_volts.T @ meaned_volts)))
-    # print(np.std(noisy_voltage - voltage, axis=0))
-    # print(np.std(noisy_current - current, axis=0))
+                                                      noisy_current, phases_ids if phases == "012" else None,
+                                                      laplacian, max_iterations, verbose)
 
     if continue_id:
         pprint("Loading previous bayesian eiv identification result...")
@@ -116,12 +105,27 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
         np.savez(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"), **sim_STLS)
         pprint("Done!")
 
-    _, _, expected_max_rrms_uncertain = run_fcns.eiv_fim(name, noisy_voltage, noisy_current,
-                                                         voltage_magnitude_sd + 1j * voltage_phase_sd,
-                                                         current_magnitude_sd + 1j * current_phase_sd,
-                                                         pmu_ratings, y_sparse_tls_cov, laplacian, verbose)
-    pprint("Cramer rao bound (exact+approx): " + str(expected_max_rrms*100)
-           + ", " + str(expected_max_rrms_uncertain*100))
+    # Error covariance analysis
+    if uncertainty:
+        fim_wtls, cov_wtls, expected_max_rrms = run_fcns.eiv_fim(name, voltage, current,
+                                                                 voltage_magnitude_sd + 1j * voltage_phase_sd,
+                                                                 current_magnitude_sd + 1j * current_phase_sd,
+                                                                 pmu_ratings, y_bus, None, laplacian, verbose)
+
+        fim_est, cov_est, expected_max_rrms_uncertain = run_fcns.eiv_fim(name, noisy_voltage, noisy_current,
+                                                                         voltage_magnitude_sd + 1j * voltage_phase_sd,
+                                                                         current_magnitude_sd + 1j * current_phase_sd,
+                                                                         pmu_ratings, y_sparse_tls_cov, None, laplacian,
+                                                                         verbose)
+        print("Cramer rao bound (exact+approx): " + str(expected_max_rrms*100)
+              + ", " + str(expected_max_rrms_uncertain*100))
+
+        if not three_phased:
+            pprint("Saving uncertainty results...")
+            sim_STLS = {'e': cov_wtls, 'b': cov_est}
+            #TODO: put this back
+            #np.savez(conf.conf.DATA_DIR / ("simulations_output/uncertainty_results_" + name + ".npz"), **sim_STLS)
+            pprint("Done!")
 
 if __name__ == '__main__':
     identify()

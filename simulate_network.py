@@ -37,13 +37,8 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
     redo_noise = noise or (not loads and not network_sim and not noise)
 
     # 1 phase or 3 phases and what network?
-    nets = net_templates_3ph if three_phased else net_templates
     NetType = SimulatedNet3P if three_phased else SimulatedNet
-
-    bus_data = getattr(nets, str(network) + "_bus")
-    line_data = getattr(nets, str(network) + "_net")
-    net = run3ph.make_net(network, ieee123_types, bus_data, line_data) if three_phased \
-        else run.make_net(network, bus_data, line_data)
+    net, bus_data, _ = run3ph.make_net(network) if three_phased else run.make_net(network)
 
     # How to deal with hidden nodes
     hidden_nodes = conf.simulation.hidden_nodes
@@ -96,8 +91,8 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
     if verbose:
         print("Reducing unobservable or unobserved nodes...")
     # Reducing network
-    idx_todel, y_bus = run3ph.reduce_network(net, voltage, current, hidden_nodes, laplacian, not sequence) \
-        if three_phased else run.reduce_network(net, voltage, current, hidden_nodes, laplacian)
+    idx_todel, y_bus = run3ph.reduce_network(net, voltage, current, hidden_nodes, laplacian, not sequence, verbose) \
+        if three_phased else run.reduce_network(net, voltage, current, hidden_nodes, laplacian, verbose)
 
     # Removing reduced nodes
     noisy_voltage = np.delete(noisy_voltage, idx_todel, axis=1)
