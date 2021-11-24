@@ -37,7 +37,7 @@ The files in the [ROOT_REPO]/conf folder also provide variables that can be modi
 Comments in their contents explain what they do.
 
 ## Simulation for CDC21 manuscript
-Simulations for our manuscript *Bayesian error-in-variable models for the identification of distribution grids* 
+Simulations for the manuscript *Bayesian error-in-variable models for the identification of distribution grids* 
 ([available here](https://infoscience.epfl.ch/record/290186?&ln=en)) have been generated using the following commands.
 ``` shell script
 python simulate_network.py -vle --network cigre_mv_feeder1
@@ -55,7 +55,9 @@ conf.identification.use_tls_diag = True
 DISCLAIMER: Due to newly introduced seed resets for reproductibility and potential differences in load profiles, 
 the results may not be exactly the same as in the paper.
 
-## Simulation for other manuscript
+## Simulation for TSG manuscript
+Simulations for the manuscript *Bayesian error-in-variable models for the identification of distribution grids* 
+(to be submitted in Transactions on Smart Grids) have been generated using the following commands.
 ``` shell script
 python simulate_network.py -vqte --network ieee123center
 python identify_network.py -vqe --max-iterations 20 --network ieee123center --phases 012
