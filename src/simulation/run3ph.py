@@ -4,18 +4,28 @@ from conf import conf
 from src.simulation.simulation_3ph import SimulatedNet3P
 from src.simulation.load_profile import load_profile_from_numpy
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
+from src.simulation import net_templates_3ph
+from src.simulation.net_templates_3ph import ieee123_types
 
-def make_net(name, line_types, bus_data, line_data):
-    if bus_data is None:
-        return
 
-    if line_data is None:
-        return
+def make_net(name, y_bus=None):
+    # Network
+    """
+    # Creates network from template parameters in src.simulation.net_templates_3ph
 
-    net = SimulatedNet3P(line_types, bus_data, line_data)
+    :param name: Name of the network
+    :param y_bus: Create network from admittance matrix instead of line parameters
+    """
+
+    bus_data = getattr(net_templates_3ph, str(name) + "_bus")
+    line_data = getattr(net_templates_3ph, str(name) + "_net") if y_bus is None else []
+
+    net = SimulatedNet3P(ieee123_types, bus_data, line_data)
+    if y_bus is not None:
+        net.create_lines_from_ybus(y_bus)
     net.name = name
 
-    return net
+    return net, bus_data, line_data
 
 def generate_loads(net, load_params=None, verbose=True):
     # Load profiles
@@ -58,7 +68,7 @@ def generate_loads(net, load_params=None, verbose=True):
                                                      load_p_rb=None, load_q_rb=None, load_p_rc=None, load_q_rc=None,
                                                      verbose=verbose)
 
-            print("Asymmetric loads")
+            pprint("Asymmetric loads")
             load_asym = load_profile_from_numpy(active_file=active_file,
                                                 reactive_file=reactive_file,
                                                 skip_header=selected_weeks * 7 * 24 * 60,
@@ -112,7 +122,6 @@ def generate_loads(net, load_params=None, verbose=True):
             pprint("Done!")
 
         if constant_load_nodes is not None:
-            print(net.load.bus)
             for i in range(len(net.load.bus)):
                 if net.load.bus.values[i] in constant_load_nodes:
                     load_p[:, i] = net.load.p_mw[net.load.p_mw.index[i]]
@@ -126,7 +135,7 @@ def generate_loads(net, load_params=None, verbose=True):
                     load_asym[4][:, i] = net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
                     load_asym[5][:, i] = net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
 
-        print("Saving loads...")
+        pprint("Saving loads...")
         sim_PQ = {'p': load_p, 'q': load_q, 'a': load_asym, 't': times}
         np.savez(conf.DATA_DIR / ("simulations_output/sim_loads_" + net.name + ".npz"), **sim_PQ)
         pprint("Done!")
@@ -134,7 +143,7 @@ def generate_loads(net, load_params=None, verbose=True):
         pprint("Loading loads...")
         sim_PQ = np.load(conf.DATA_DIR / ("simulations_output/sim_loads_" + net.name + ".npz"))
         load_p, load_q, load_asym, times = sim_PQ["p"], sim_PQ["q"], sim_PQ["a"], sim_PQ["t"]
-        print("Done!")
+        pprint("Done!")
 
     return load_p, load_q, load_asym, times
 
@@ -205,7 +214,8 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
     # Voltages being normalized, it simply becomes $|S|$.
     """
     if noise_params is not None:
-        voltage_magnitude_sd, current_magnitude_sd, phase_sd, use_equivalent_noise, pmu_safety_factor = noise_params
+        voltage_magnitude_sd, current_magnitude_sd, voltage_phase_sd, current_phase_sd,\
+            use_equivalent_noise, pmu_safety_factor = noise_params
         pmu_safety_factor = pmu_safety_factor.reshape((len(pmu_safety_factor), 1))
     else:
         pmu_safety_factor = np.array([[4], [4], [4]])
@@ -260,7 +270,8 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
             ts = np.linspace(0, np.max(times), round(np.max(times) * fmeas / fparam))
             voltage_magnitude_sd = voltage_magnitude_sd / np.sqrt(fparam)
             current_magnitude_sd = current_magnitude_sd / np.sqrt(fparam)
-            phase_sd = phase_sd / np.sqrt(fparam)
+            voltage_phase_sd = voltage_phase_sd / np.sqrt(fparam)
+            current_phase_sd = current_phase_sd / np.sqrt(fparam)
             fparam = 1
 
             pprint("Done!")
@@ -269,19 +280,21 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
         pprint("Adding noise and filtering...")
 
         mg_stds = np.concatenate((voltage_magnitude_sd * np.ones_like(pmu_ratings), current_magnitude_sd * pmu_ratings))
+        ph_stds = np.concatenate((voltage_phase_sd * np.ones_like(pmu_ratings),
+                                  current_phase_sd * np.ones_like(pmu_ratings)))
 
         noisy_voltage, noisy_current = \
             tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
-                                                           std_m=mg_stds, std_p=phase_sd,
+                                                           std_m=mg_stds, std_p=ph_stds,
                                                            noise_fcn=add_polar_noise_to_measurement,
-                                                           verbose=True), 2, axis=1))
+                                                           verbose=verbose), 2, axis=1))
 
         voltage, current = \
             tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
                                                            std_m=None, std_p=None, noise_fcn=None,
-                                                           verbose=True), 2, axis=1))
+                                                           verbose=verbose), 2, axis=1))
         pprint("Done!")
 
         pprint("Saving filtered data...")
@@ -298,7 +311,7 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
     return noisy_voltage, noisy_current, voltage, current, pmu_ratings, fparam
 
 
-def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose=True):
+def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, reduce_single=True, verbose=True):
     """
     # Hidden nodes and nodes with no load and are very hard to estimate.
     # Kron reduction is a technique to obtain an equivalent graph without these nodes.
@@ -312,6 +325,7 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose
     :param current: current measurements (complex T-by-n array)
     :param hidden_nodes: loaded nodes to reduce (nodes with 0 loads will always also be reduced)
     :param laplacian: is the admittance matrix a Laplacian?
+    :param reduce_single: reduce phases separately or keep passive phases in partially active nodes
     :param verbose: verbose ON/OFF
     """
 
@@ -323,7 +337,7 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose
 
     y_bus = net.make_y_bus()
 
-    print("Kron reducing loads with no current...")
+    pprint("Kron reducing loads with no current...")
     idx_todel = []
     # subKron reducing the ext_grid
     for idx in net.ext_grid.bus.values:
@@ -332,6 +346,11 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose
         y_bus = np.delete(np.delete(y_bus, [i, i + 1, i + 2], axis=1), [i, i + 1, i + 2], axis=0)
 
     passive_nodes = net.give_passive_nodes()
+    if not reduce_single:
+        # Reduce only nodes passive on all three phases
+        passive_nodes = np.intersect1d(passive_nodes[0], np.intersect1d(passive_nodes[1], passive_nodes[2]))
+        passive_nodes = (passive_nodes, passive_nodes, passive_nodes)
+
     idx_tored = []
     shunts = np.zeros(y_bus.shape[0], dtype=y_bus.dtype)
     for ph in range(3):
@@ -345,8 +364,8 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, verbose
     y_bus = net.kron_reduction(idx_tored, y_bus + np.diag(shunts))
     idx_todel.extend(idx_tored)
 
-    print("Done!")
-    print("reduced elements: " + str(np.array(idx_todel) + 1))
+    pprint("Done!")
+    pprint("reduced elements: " + str(np.array(idx_todel) + 1))
 
     return idx_todel, y_bus
 

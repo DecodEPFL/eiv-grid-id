@@ -4,18 +4,27 @@ from conf import conf
 from src.simulation.simulation import SimulatedNet
 from src.simulation.load_profile import load_profile_from_numpy, generate_gaussian_load
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
+from src.simulation import net_templates
 
-def make_net(name, bus_data, line_data):
-    if bus_data is None:
-        return
 
-    if line_data is None:
-        return
+def make_net(name, y_bus=None):
+    # Network
+    """
+    # Creates network from template parameters in src.simulation.net_templates_3ph
+
+    :param name: Name of the network
+    :param y_bus: Create network from admittance matrix instead of line parameters
+    """
+
+    bus_data = getattr(net_templates, str(name) + "_bus")
+    line_data = getattr(net_templates, str(name) + "_net") if y_bus is None else []
 
     net = SimulatedNet(bus_data, line_data)
+    if y_bus is not None:
+        net.create_lines_from_ybus(y_bus)
     net.name = name
 
-    return net
+    return net, bus_data, line_data
 
 def generate_loads(net, load_params=None, verbose=True):
     # Load profiles
@@ -210,13 +219,13 @@ def add_noise_and_filter(net, voltage, current, times, fmeas, steps, noise_param
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
                                                            std_m=mg_stds, std_p=phase_stds,
                                                            noise_fcn=add_polar_noise_to_measurement,
-                                                           verbose=True), 2, axis=1))
+                                                           verbose=verbose), 2, axis=1))
 
         voltage, current = \
             tuple(np.split(filter_and_resample_measurement(np.hstack((voltage, current)),
                                                            oldtimes=times.squeeze(), newtimes=ts, fparam=fparam,
                                                            std_m=None, std_p=None, noise_fcn=None,
-                                                           verbose=True), 2, axis=1))
+                                                           verbose=verbose), 2, axis=1))
         pprint("Done!")
 
         pprint("Saving filtered data...")

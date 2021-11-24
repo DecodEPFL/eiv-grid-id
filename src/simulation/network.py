@@ -41,7 +41,7 @@ class NetData(Net):
             pp.create_load(self, bus, p, q, name="(" + str(i) + ")", index=i, const_z_percent=Z, const_i_percent=I)
         elif t == Net.TYPE_PCC:
             pp.create_load(self, bus, 0, 0, name="(" + str(i) + ")", index=i)
-            pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['mva'], rx_max=ext_sc_carac['rx'],
+            pp.create_ext_grid(self, bus, s_sc_max_mva=np.nan, rx_max=ext_sc_carac['rx'],
                                r0x0_max=ext_sc_carac['r0x0'], x0x_max=ext_sc_carac['x0x'], max_p_mw=p, max_q_mvar=q)
         return self
 
@@ -79,6 +79,24 @@ class NetData(Net):
                                                pp.get_element_index(self, "bus", str(l.end_bus)),
                                                l.length, l.R / l.length, l.X / l.length, 0, 1e10,
                                                "(" + str(l.start_bus) + "," + str(l.end_bus) + ")")
+        return self
+
+    def create_lines_from_ybus(self, y_bus: np.array):
+        """
+        Adds lines to the network to recreate a given admittance matrix
+        elements are ordered the same way as bus.index
+
+        :param ls: list of LineData objects to add
+        :return: self network for chained calls
+        """
+        for i in range(y_bus.shape[0]):
+            for j in range(i):
+                if np.abs(y_bus[i, j]) > 0:
+                    y = -y_bus[i, j]/(self.bus.vn_kv[i]*self.bus.vn_kv[i])*self.sn_mva
+                    pp.create_line_from_parameters(self, pp.get_element_index(self, "bus", str(self.bus.index[i])),
+                                                   pp.get_element_index(self, "bus", str(self.bus.index[j])),
+                                                   1.0, np.real(1.0/y), np.imag(1.0/y), 0, 1e10,
+                                                   "(" + str(self.bus.index[i]) + "," + str(self.bus.index[j]) + ")")
         return self
 
     def make_y_bus(self) -> np.array:

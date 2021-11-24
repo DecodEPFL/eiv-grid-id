@@ -33,3 +33,31 @@ python identify_network.py --help
 python plot_results.py --help
 ```
 
+The files in the [ROOT_REPO]/conf folder also provide variables that can be modified. 
+Comments in their contents explain what they do.
+
+## Simulation for CDC21 manuscript
+Simulations for our manuscript *Bayesian error-in-variable models for the identification of distribution grids* 
+([available here](https://infoscience.epfl.ch/record/290186?&ln=en)) have been generated using the following commands.
+``` shell script
+python simulate_network.py -vle --network cigre_mv_feeder1
+python identify_network.py -vlw --network cigre_mv_feeder1 --max-iterations 50
+python plot_results.py -v --network cigre_mv_feeder1 --color-scale 1.0
+```
+The parameters in [ROOT_REPO]/conf need however to be adjusted as follows.
+``` python script
+conf.simulation.days to 1
+conf.simulation.time_steps to 500
+conf.identification.lambda_eiv = 4e7
+conf.identification.lambdaprime = 20
+conf.identification.use_tls_diag = True
+```
+DISCLAIMER: Due to newly introduced seed resets for reproductibility and potential differences in load profiles, 
+the results may not be exactly the same as in the paper.
+
+## Simulation for other manuscript
+``` shell script
+python simulate_network.py -vqte --network ieee123center
+python identify_network.py -vqe --max-iterations 20 --network ieee123center --phases 012
+python plot_results.py -v --network ieee123center
+```

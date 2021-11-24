@@ -22,7 +22,7 @@ class BayesianPrior(object):
     """
 
     def __init__(self, n=0, other=None):
-        self.L = other.L if other is not None else np.zeros((0,n))
+        self.L = other.L if other is not None else np.zeros((0, n))
         self.mu = other.mu if other is not None else np.zeros(0)
         self.n = n
 
@@ -44,10 +44,27 @@ class BayesianPrior(object):
         """
         weights = self._std_weights(weights, values)
 
+        self.mu = np.concatenate((self.mu, weights*values))
+        added_L = np.zeros((len(indices), self.n))
+        for i in range(len(indices)):
+            added_L[i, indices[i]] = weights[i]
+
+        self.L = np.vstack((self.L, added_L))
+
+    def add_exact_adaptive_prior(self, indices, values, weights=None):
+        """
+        Adds a prior centered on an exact value of a parameter
+
+        :param indices: indices of the parameters on which the prior apply
+        :param values: values of the parameters for corresponding indices
+        :param weights: uncertainty on the values: high if weight is low
+        """
+        weights = self._std_weights(weights, values)
+
         self.mu = np.concatenate((self.mu, weights))
         added_L = np.zeros((len(indices), self.n))
         for i in range(len(indices)):
-            added_L[i, indices[i]] = weights[i]/values[i]
+            added_L[i, indices[i]] = weights[i] / values[i]
 
         self.L = np.vstack((self.L, added_L))
 

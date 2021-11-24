@@ -10,7 +10,7 @@ import numpy as np
 """
 
 #VERY stiff external grid
-ext_sc_carac = {'mva' :1000000000, 'rx':0.1, 'x0x':1.0, 'r0x0':0.1}
+ext_sc_carac = {'sc' :100000, 'rx':0.1, 'x0x':1.0, 'r0x0':0.1}
 #ext_sc_carac = {'mva' :np.nan, 'rx':np.nan, 'x0x':np.nan, 'r0x0':np.nan}
 
 
@@ -99,10 +99,15 @@ class Net(pp.pandapowerNet, ABC):
         if y_bus is None:
             y_bus = self.make_y_bus()
 
-        for i in idx_tored:
-            for j in range(y_bus.shape[0]):
-                for k in range(y_bus.shape[1]):
-                    if j is not i and k is not i:
-                        y_bus[j, k] = y_bus[j, k] - y_bus[j, i] * y_bus[i, k] / y_bus[i, i]
+        not_idx_tored = np.array(list(set(range(y_bus.shape[0])) - set(idx_tored)), dtype=np.int64)
+        idx_tored = np.array(idx_tored, dtype=np.int64)
+        y_red = y_bus[not_idx_tored, :][:, not_idx_tored] - y_bus[not_idx_tored, :][:, idx_tored] @ \
+                np.linalg.pinv(y_bus[idx_tored, :][:, idx_tored]) @ y_bus[idx_tored, :][:, not_idx_tored]
 
-        return np.delete(np.delete(y_bus, idx_tored, axis=1), idx_tored, axis=0)
+        #for i in idx_tored:
+        #    for j in range(y_bus.shape[0]):
+        #        for k in range(y_bus.shape[1]):
+        #            if j is not i and k is not i:
+        #                y_bus[j, k] = y_bus[j, k] - y_bus[j, i] * y_bus[i, k] / y_bus[i, i]
+
+        return y_red  # np.delete(np.delete(y_bus, idx_tored, axis=1), idx_tored, axis=0)

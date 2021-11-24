@@ -1,10 +1,11 @@
-from conf.conf import GPU_AVAILABLE, CUDA_DEVICE_USED, DATA_DIR
+from conf.conf import GPU_AVAILABLE, DATA_DIR
 import numpy as np
 import scipy.sparse as sp
 import ctypes
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib as ply
+from matplotlib.colors import PowerNorm
 import proplot
 import tikzplotlib
 
@@ -39,7 +40,7 @@ def map_color_colormap(name, nitem):
         return [name for i in range(nitem)]
 
 
-def plot_heatmap(m: np.array, name: str, minval=None, maxval=None, colormap=proplot.Colormap("fire")):
+def plot_heatmap(m: np.array, name: str, minval=None, maxval=None, colormap=proplot.Colormap("fire"), powernorm=0.5):
     """
     Plots the heatmap of the absolute or magnitude value of a matrix.
     Saves the result as [name].png. Also saves the matrix itself into a npz file.
@@ -49,11 +50,14 @@ def plot_heatmap(m: np.array, name: str, minval=None, maxval=None, colormap=prop
     :param minval: minimum value
     :param maxval: maximum value
     :param colormap: color map used to plot the matrix
+    :param powernorm: use exponent for the colormap scale
     """
     data_file = {'m': m}
     np.savez(DATA_DIR / ("simulations_output/plot_data/" + name + ".npz"), **data_file)
 
-    sns_plot = sns.heatmap(np.abs(m), vmin=minval, vmax=maxval, cmap=colormap)
+    sns_plot = sns.heatmap(np.abs(m), vmin=minval, vmax=maxval, cmap=colormap,
+                           norm=PowerNorm(powernorm, vmin=minval, vmax=maxval))
+
     fig = sns_plot.get_figure()
     fig.savefig(DATA_DIR / (name + ".png"))
     plt.clf()

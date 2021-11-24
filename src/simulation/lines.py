@@ -72,6 +72,29 @@ def admittance_sequence_to_phase(y_012):
 
     return t_abc @ y_012 @ t_012
 
+def admittance_phase_to_sequence(y_012):
+    """
+    Converts a squence admittance matrix (diagonal 3x3 blocks) into a phase one
+
+    :param y_012: Sequence admittance matrix as numpy array
+    :return: Admittance matrix as numpy array
+    """
+    t_abc = np.kron(np.eye(int(y_012.shape[1]/3)), np.array(
+        [
+            [1, 1, 1],
+            [1, np.exp(1j * np.deg2rad(-120)), np.exp(1j * np.deg2rad(120))],
+            [1, np.exp(1j * np.deg2rad(120)), np.exp(1j * np.deg2rad(-120))]
+        ]))
+
+    t_012 = np.kron(np.eye(int(y_012.shape[1]/3)), np.divide(np.array(
+        [
+            [1, 1, 1],
+            [1, np.exp(1j * np.deg2rad(120)), np.exp(1j * np.deg2rad(-120))],
+            [1, np.exp(1j * np.deg2rad(-120)), np.exp(1j * np.deg2rad(120))]
+        ]), 3))
+
+    return t_012 @ y_012 @ t_abc
+
 
 def measurement_sequence_to_phase(measurement):
     """

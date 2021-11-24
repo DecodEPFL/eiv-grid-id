@@ -55,7 +55,7 @@ class NetData3P(Net):
         elif t == Net.TYPE_PCC:
             assert(np.isscalar(p))
             pp.create_load(self, bus, 0, 0, name=str(i), index=i)
-            pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['mva'], rx_max=ext_sc_carac['rx'],
+            pp.create_ext_grid(self, bus, s_sc_max_mva=ext_sc_carac['sc'], rx_max=ext_sc_carac['rx'],
                                r0x0_max=ext_sc_carac['r0x0'], x0x_max=ext_sc_carac['x0x'], max_p_mw=p, max_q_mvar=q)
         return self
 
@@ -87,6 +87,16 @@ class NetData3P(Net):
                 self.create_line(l.start_bus, l.end_bus, l.length, l.t)
         return self
 
+    def create_lines_from_ybus(self, y_bus: np.array):
+        """
+        Adds lines to the network to recreate a given admittance matrix
+        elements are ordered the same way as bus.index
+
+        :param ls: list of LineData objects to add
+        :return: self network for chained calls
+        """
+        raise NotImplementedError("Creating lines from ybus not implemented for three phases network.")
+
     def make_y_bus(self) -> np.array:
         """
         Makes the admittance matrix of the network
@@ -100,6 +110,6 @@ class NetData3P(Net):
         y_bus2 = run_net['_ppc2']['internal']['Ybus'].todense()
 
         y_012 = np.kron(y_bus0, np.diag([1, 0, 0])) + np.kron(y_bus1, np.diag([0, 1, 0])) \
-                + np.kron(y_bus1, np.diag([0, 0, 1]))  # TODO: check why not y_bus2
+                + np.kron(y_bus2, np.diag([0, 0, 1]))
 
         return admittance_sequence_to_phase(y_012)

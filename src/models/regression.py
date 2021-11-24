@@ -5,9 +5,18 @@ from scipy import sparse
 from scipy.linalg import pinv
 from tqdm import tqdm
 
+from conf import conf
+if conf.GPU_AVAILABLE:
+    import cupy
+    import cupyx.scipy.sparse as cusparse
+    from cupyx.scipy.sparse.linalg import spsolve
+    from src.models.gpu_matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix,\
+        make_complex_vector, unvectorize_matrix
+else:
+    from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix,\
+        make_complex_vector, unvectorize_matrix
+
 from src.models.abstract_models import GridIdentificationModel, UnweightedModel, IterationStatus
-from src.models.matrix_operations import make_real_matrix, make_real_vector, vectorize_matrix, make_complex_vector, \
-    unvectorize_matrix
 
 """
     Classes implementing ordinary least squares type regressions
@@ -89,44 +98,51 @@ class BayesianRegression(GridIdentificationModel):
         :param y_init: initial guess of y
         """
         #Initialization of parameters
+        if conf.GPU_AVAILABLE:
+            sp = cusparse
+            cp = cupy
+
+            x = cp.array(x, dtype=cp.complex64)
+            z = cp.array(z, dtype=cp.complex64)
+            y_init = cp.array(y_init, dtype=cp.complex64)
+
+        else:
+            sp = sparse
+            cp = np
 
         #Copy data
         samples, n = x.shape
-        DT = sparse.csr_matrix(self._transformation_matrix(n))
-        E = sparse.csr_matrix(self._elimination_matrix(n))
+        DT = sp.csr_matrix(cp.array(self._transformation_matrix(n), dtype=cp.float32))
+        E = sp.csr_matrix(cp.array(self._elimination_matrix(n), dtype=cp.float32))
 
-        A = make_real_matrix(sparse.kron(sparse.eye(n), x, format='csr') @ DT)
+        A = sp.csr_matrix(make_real_matrix(sp.kron(sp.eye(n), x, format='csr') @ DT))
         y = make_real_vector(E @ vectorize_matrix(y_init))
-        dA = sparse.csr_matrix(np.zeros(A.shape))
-        a = make_real_vector(vectorize_matrix(x))
         b = make_real_vector(vectorize_matrix(z))
-        AmdA = sparse.csr_matrix(A)
-
-        #Use covariances if provided but transform them into sparse
-        z_weight = sparse.eye(2 * n * samples, format='csr')
 
         y_mat = y_init
-        M, mu, penalty = self.prior.log_distribution(y)
+        M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
         # start iterating
         for it in (tqdm(range(self._max_iterations)) if self._verbose else range(self._max_iterations)):
             # Update y
-            iASA = (AmdA.T @ z_weight @ AmdA) + self._lambda * M
-            ASb_vec = AmdA.T @ z_weight @ b + self._lambda * mu
+            iASA = (A.T @ A) + self._lambda * sp.csr_matrix(M)
+            ASb_vec = A.T @ b + self._lambda * cp.array(mu)
 
-            y = sparse.linalg.spsolve(iASA, ASb_vec)
+            # Solve new y
+            y = sp.linalg.spsolve(iASA, ASb_vec).squeeze()
             y_mat = unvectorize_matrix(DT @ make_complex_vector(y), (n, n))
 
-            M, mu, penalty = self.prior.log_distribution(y)
+            M, mu, penalty = self.prior.log_distribution(y.get() if conf.GPU_AVAILABLE else y)
 
             # Update cost function
-            db = b - (A - dA) @ y
-            target = db.dot(z_weight.dot(db)) + self._lambda * penalty
-            self._iterations.append(IterationStatus(it, y_mat, target))
+            db = (b - A @ y).squeeze()
+            cost = (db.dot(db)).get() if conf.GPU_AVAILABLE else db.dot(db)
+            target = np.abs(cost + self._lambda * penalty)
+            self._iterations.append(IterationStatus(it, y_mat.get() if conf.GPU_AVAILABLE else y_mat, target))
 
             # Check stationarity
             if it > 0 and self._is_stationary_point(target, self.iterations[it - 1].target_function):
                 break
 
         # Save results
-        self._admittance_matrix = y_mat
+        self._admittance_matrix = y_mat.get() if conf.GPU_AVAILABLE else y_mat
