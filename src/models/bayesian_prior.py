@@ -22,7 +22,7 @@ class BayesianPrior(object):
     """
 
     def __init__(self, n=0, other=None):
-        self.L = other.L if other is not None else np.zeros((0,n))
+        self.L = other.L if other is not None else np.zeros((0, n))
         self.mu = other.mu if other is not None else np.zeros(0)
         self.n = n
 

@@ -123,8 +123,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
         if not three_phased:
             pprint("Saving uncertainty results...")
             sim_STLS = {'e': cov_wtls, 'b': cov_est}
-            #TODO: put this back
-            #np.savez(conf.conf.DATA_DIR / ("simulations_output/uncertainty_results_" + name + ".npz"), **sim_STLS)
+            np.savez(conf.conf.DATA_DIR / ("simulations_output/uncertainty_results_" + name + ".npz"), **sim_STLS)
             pprint("Done!")
 
 if __name__ == '__main__':

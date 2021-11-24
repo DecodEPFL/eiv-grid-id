@@ -15,10 +15,11 @@ from src.identification.utils import plot_heatmap, plot_scatter, plot_series
 @click.option('--network', "-n", default="bolognani56", help='Name of the network to simulate')
 @click.option('--max-plot-y', "-m", default=0, help='Maximum admittance on the plots')
 @click.option('--max-plot-err', "-e", default=0, help='Maximum error on the plots')
+@click.option('--color-scale', "-c", default=0.5, help='Activates verbosity')
 @click.option('--sequence', "-q", is_flag=True, help='show results using sequences. Only for three phases!')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
+def plot_results(network, max_plot_y, max_plot_err, color_scale, sequence, verbose):
     if verbose:
         def pprint(a):
             print(a)
@@ -57,7 +58,7 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
     meaned_volts = voltage-np.tile(np.mean(voltage, axis=0), (voltage.shape[0], 1))
     plot_series(np.log10(np.sqrt(np.abs(np.linalg.eigvals(meaned_volts.T @ meaned_volts)))).reshape((nodes, 1)),
                 'correlations', s=3, colormap='blue2')  # np.std(voltage, axis=0) shows SNR
-    plot_heatmap(np.abs(y_bus), "y_bus", minval=min_plot, maxval=max_plot_y)
+    plot_heatmap(np.abs(y_bus), "y_bus", minval=min_plot, maxval=max_plot_y, powernorm=color_scale)
 
     if os.path.isfile(conf.conf.DATA_DIR / ("simulations_output/standard_results_" + name + ".npz")):
         pprint("Loading standard estimation methods results...")
@@ -72,20 +73,20 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
         print(ols_metrics)
         with open(conf.conf.DATA_DIR / 'ols_error_metrics.txt', 'w') as f:
             print(ols_metrics, file=f)
-        plot_heatmap(np.abs(y_ols), "y_ols", minval=min_plot, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_ols), "y_ols", minval=min_plot, maxval=max_plot_y, powernorm=color_scale)
 
         tls_metrics = error_metrics(y_bus, y_tls)
         print(tls_metrics)
         with open(conf.conf.DATA_DIR / 'tls_error_metrics.txt', 'w') as f:
             print(tls_metrics, file=f)
-        plot_heatmap(np.abs(y_tls), "y_tls", minval=min_plot, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_tls), "y_tls", minval=min_plot, maxval=max_plot_y, powernorm=color_scale)
         np.set_printoptions(suppress=True, precision=2)
 
         lasso_metrics = error_metrics(y_bus, y_lasso)
         print(lasso_metrics)
         with open(conf.conf.DATA_DIR / 'lasso_error_metrics.txt', 'w') as f:
             print(lasso_metrics, file=f)
-        plot_heatmap(np.abs(y_lasso), "y_lasso", minval=min_plot, maxval=max_plot_y)
+        plot_heatmap(np.abs(y_lasso), "y_lasso", minval=min_plot, maxval=max_plot_y, powernorm=color_scale)
 
         pprint("Done!")
     else:
@@ -109,8 +110,10 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
         with open(conf.conf.DATA_DIR / 'sparse_tls_error_metrics.txt', 'w') as f:
             print(sparse_tls_cov_metrics, file=f)
         print(sparse_tls_cov_metrics)
-        plot_heatmap(np.abs(y_sparse_tls_cov), "y_sparse_tls_cov", minval=min_plot, maxval=max_plot_y)
-        plot_heatmap(np.abs(y_sparse_tls_cov - y_bus), "y_sparse_tls_cov_errors", minval=min_plot, maxval=max_plot_err)
+        plot_heatmap(np.abs(y_sparse_tls_cov), "y_sparse_tls_cov",
+                     minval=min_plot, maxval=max_plot_y, powernorm=color_scale)
+        plot_heatmap(np.abs(y_sparse_tls_cov - y_bus), "y_sparse_tls_cov_errors",
+                     minval=min_plot, maxval=max_plot_err, powernorm=color_scale)
 
         plot_series(np.expand_dims(sparse_tls_cov_errors.to_numpy(), axis=1), 'errors', s=3, colormap='blue2')
         plot_series(np.expand_dims(sparse_tls_cov_targets[1:].to_numpy(), axis=1), 'targets', s=3, colormap='blue2')
@@ -155,15 +158,15 @@ def plot_results(network, max_plot_y, max_plot_err, sequence, verbose):
         pprint("Done!")
 
         pprint("Plotting standard estimation methods results...")
-        plot_heatmap(np.abs(y_tls - y_bus), "tls_errors", minval=min_plot, maxval=max_plot_err)
+        plot_heatmap(np.abs(y_tls - y_bus), "tls_errors", minval=min_plot, maxval=max_plot_err, powernorm=color_scale)
 
         cov_metrics = error_metrics(y_tls - y_bus, cov_wtls)
         print(cov_metrics)
-        plot_heatmap(cov_wtls, "tls_cov", minval=min_plot, maxval=max_plot_err)
+        plot_heatmap(cov_wtls, "tls_cov", minval=min_plot, maxval=max_plot_err, powernorm=color_scale)
 
         est_cov_metrics = error_metrics(y_tls - y_bus, cov_est)
         print(est_cov_metrics)
-        plot_heatmap(cov_est, "tls_cov_est", minval=min_plot, maxval=max_plot_err)
+        plot_heatmap(cov_est, "tls_cov_est", minval=min_plot, maxval=max_plot_err, powernorm=color_scale)
 
         pprint("Done!")
     else:

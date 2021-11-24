@@ -96,8 +96,8 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
     prior = SparseSmoothPrior(smoothness_param=1e-8, n=len(E @ vectorize_matrix(y_tls))*2)
 
     # Indices of all non-diagonal elements. We do not want to penalize diagonal ones (always non-zero)
-    idx_offdiag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.ones((nodes, nodes))
-                                                                        - np.eye(nodes))) > 0)[0]
+    idx_offdiag = np.where(make_real_vector((1+1j)*np.abs(E @ vectorize_matrix(np.ones((nodes, nodes))
+                                                                        - np.eye(nodes)))) > 0)[0]
 
     prior.add_adaptive_sparsity_prior(indices=idx_offdiag,
                                       values=np.abs(make_real_vector(E @ vectorize_matrix(y_sym_tls)))[idx_offdiag],
@@ -112,14 +112,14 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
 
     if contrast_each_row:
         # Indices of the real part of each rows stacked with the indices of the imaginary part of each row
-        idx_contrast = np.vstack((np.array([np.where(make_real_vector(E @ vectorize_matrix(
+        idx_contrast = np.vstack((np.array([np.where(np.abs(make_real_vector(E @ vectorize_matrix(
             np.eye(nodes)[:, i:i+1] @ np.ones((1, nodes))
             + np.ones((nodes, 1)) @ np.eye(nodes)[i:i+1, :]
-            - 2*np.eye(nodes)[:, i:i+1] @ np.eye(nodes)[i:i+1, :])) > 0)[0] for i in range(nodes)]),
-                                  np.array([np.where(make_real_vector(1j*E @ vectorize_matrix(
+            - 2*np.eye(nodes)[:, i:i+1] @ np.eye(nodes)[i:i+1, :]))) > 0)[0] for i in range(nodes)]),
+                                  np.array([np.where(np.abs(make_real_vector(1j*E @ vectorize_matrix(
             np.eye(nodes)[:, i:i+1] @ np.ones((1, nodes))
             + np.ones((nodes, 1)) @ np.eye(nodes)[i:i+1, :]
-            - 2*np.eye(nodes)[:, i:i+1] @ np.eye(nodes)[i:i+1, :])) > 0)[0] for i in range(nodes)])))
+            - 2*np.eye(nodes)[:, i:i+1] @ np.eye(nodes)[i:i+1, :]))) > 0)[0] for i in range(nodes)])))
 
         prior.add_contrast_prior(indices=idx_contrast,
                                  values=values_contrast,
@@ -127,7 +127,7 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
                                  orders=SmoothPrior.LAPLACE)
 
         if regularize_diag:
-            idx_diag = np.where(make_real_vector((1+1j)*E @ vectorize_matrix(np.eye(nodes))) > 0)[0]
+            idx_diag = np.where(np.abs(make_real_vector((1+1j)*E @ vectorize_matrix(np.eye(nodes)))) > 0)[0]
 
             prior.add_exact_adaptive_prior(indices=idx_diag,
                                            values=np.concatenate((np.real(np.diag(y_tls)), np.imag(np.diag(y_tls)))),
@@ -139,6 +139,7 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
                                  values=-np.sum(np.vstack(tuple(np.split(values_contrast, 2))), axis=1).squeeze(),
                                  weights=lambdaprime*np.array([1, -1]),
                                  orders=SmoothPrior.LAPLACE)
+
 
     return prior
 
