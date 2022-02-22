@@ -11,7 +11,7 @@ hidden_nodes = []
 constant_load_hidden_nodes = True
 
 # Week during which the sample size starts
-selected_weeks = np.array([12])
+selected_weeks = np.array([0])  # 0 is week 12 for the small dataset. Replace by 12 of using the full year data.
 
 # Total sample size on which block averaging is performed
 days = 7*len(selected_weeks)

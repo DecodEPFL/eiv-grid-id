@@ -13,10 +13,10 @@ from src.simulation.lines import measurement_phase_to_sequence, admittance_phase
 
 @click.command()
 @click.option('--network', "-n", default="bolognani56", help='Name of the network to simulate')
-@click.option('--active-profiles', '-a', default=(conf.conf.DATA_DIR / str("profiles/Electricity_Profile_RNEplus.npy")),
+@click.option('--active-profiles', '-a', default=(conf.conf.DATA_DIR / str("profiles/Electricity_Profile_RNEplus_small.npy")),
               help="Path to the active load profiles (csv or npy file)")
 @click.option('--reactive-profiles', '-r',
-              default=(conf.conf.DATA_DIR / str("profiles/Reactive_Electricity_Profile_RNEplus.npy")),
+              default=(conf.conf.DATA_DIR / str("profiles/Reactive_Electricity_Profile_RNEplus_small.npy")),
               help="Path to the reactive load profiles (csv or npy file)")
 @click.option('--gaussian-loads', "-g", default=0.0, help='Use random i.i.d. Gaussian loads with std X')
 @click.option('--loads', "-p", is_flag=True, help='Recompute load profiles only (stackable with s and d)')
