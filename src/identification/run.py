@@ -144,7 +144,7 @@ def build_complex_prior(nodes, lambdaprime, y_tls, laplacian=False,
     return prior
 
 
-def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, optimal=True):
+def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, prior_type="optimal"):
     # Bayesian priors definition
     """
     # Adds a prior using the exact parameters to another prior
@@ -157,7 +157,7 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, optimal=T
     :param lambdaprime: relative weight of the priors
     :param y_bus: exact parameter knowledge
     :param laplacian: is the admittance matrix Laplacian?
-    :param optimal: use knowledge that is the most helpful for identification or arbitrary/random one
+    :param prior_type: use knowledge that is the most helpful for identification or arbitrary/random one
     """
     if laplacian:
         DT = duplication_matrix(nodes) @ transformation_matrix(nodes)
@@ -170,7 +170,7 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, optimal=T
     tls_bus_weights = np.zeros_like(y_bus)
     tls_bus_centers = np.zeros_like(y_bus)
 
-    if optimal:
+    if prior_type == "optimal":
         # Node 2
         tls_bus_weights[0, :], tls_bus_weights[:, 0] = (1+1j), (1+1j)
         tls_bus_weights[0, 0] = 0
@@ -196,7 +196,7 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, optimal=T
         #tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
         #tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
 
-    else:
+    elif prior_type == "suboptimal":
         # Node 10
         tls_bus_weights[7, :], tls_bus_weights[:, 7] = (1+1j), (1+1j)
         tls_bus_weights[7, 7] = 0
@@ -220,14 +220,33 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, optimal=T
         #tls_bus_centers[3, 36], tls_bus_centers[36, 3] = y_bus[3, 36], y_bus[36, 3]
         #tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
         #tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
+    elif prior_type == "wrong":
+        # Node 2
+        tls_bus_weights[0, :], tls_bus_weights[:, 0] = (1+1j), (1+1j)
+        tls_bus_weights[0, 0] = 0
+        tls_bus_centers[0, :], tls_bus_centers[:, 0] = 0, 0
+        tls_bus_centers[1, 0], tls_bus_centers[0, 1] = y_bus[1, 0], y_bus[0, 1]
+        #tls_bus_centers[1, 2], tls_bus_centers[2, 1] = y_bus[1, 2], y_bus[2, 1]
+
+        # Node 50 & 51
+        tls_bus_weights[26, :], tls_bus_weights[:, 26] = (1+1j), (1+1j)
+        tls_bus_weights[25, :], tls_bus_weights[:, 25] = (1+1j), (1+1j)
+        tls_bus_weights[26, 26] = 0
+        tls_bus_weights[25, 25] = 0
+        tls_bus_centers[26, :], tls_bus_centers[:, 26] = 0, 0
+        tls_bus_centers[25, :], tls_bus_centers[:, 25] = 0, 0
+        tls_bus_centers[24, 25], tls_bus_centers[25, 24] = y_bus[24, 25], y_bus[25, 24]
+        tls_bus_centers[26, 25], tls_bus_centers[25, 26] = y_bus[26, 25], y_bus[25, 26]
+        tls_bus_centers[26, 27], tls_bus_centers[27, 26] = y_bus[26, 27], y_bus[27, 26]
+        tls_bus_centers[26, 28], tls_bus_centers[28, 26] = y_bus[26, 28], y_bus[28, 26]
 
     # Vectorize and add to the rest
     tls_bus_weights = np.where(np.abs(make_real_vector(E @ vectorize_matrix(tls_bus_weights))) > 0)[0]
     tls_bus_centers = make_real_vector(E @ vectorize_matrix(tls_bus_centers))
 
     prior.add_exact_adaptive_prior(indices=tls_bus_weights,
-                                   values=tls_bus_centers[tls_bus_weights],
-                                   weights=lambdaprime,
+                                   values=1.1 * tls_bus_centers[tls_bus_weights],
+                                   weights=0.01 * lambdaprime,
                                    orders=SmoothPrior.LAPLACE)
 
     """
@@ -383,7 +402,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
                             identification.contrast_each_row, identification.regularize_diag)
 
     if y_exact is not None:
-        prior = add_known_lines(nodes, prior, identification.lambdaprime, y_exact, laplacian=False, optimal=False)
+        prior = add_known_lines(nodes, prior, identification.lambdaprime, y_exact, laplacian=False, prior_type="suboptimal")
         #prior = build_loads_id_prior(nodes, y_exact)  # Not working!
 
     if laplacian:

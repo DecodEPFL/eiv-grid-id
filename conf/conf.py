@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import numpy as np
 import pandas as pd
 import pkgutil
@@ -11,7 +12,12 @@ noise_level = 1
 # Technical settings
 ROOT_DIR = Path(__file__).parent.parent.absolute()
 DATA_DIR = ROOT_DIR / "data"
+if not os.path.isdir(DATA_DIR / "tikz"):
+    os.makedirs(DATA_DIR / "tikz")
 SIM_DIR = DATA_DIR / "simulations_output"
+if not os.path.isdir(SIM_DIR / "plot_data"):
+    os.makedirs(SIM_DIR / "plot_data")
+
 
 TEST_SIM_DIR = ROOT_DIR / "test" / "data" / "simulations_output"
 

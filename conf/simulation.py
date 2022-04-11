@@ -5,7 +5,7 @@ from conf.conf import noise_level
 observed_nodes = [1, 3, 4, 6, 8, 9, 10, 12, 15, 16, 17, 18, 19, 22, 24, 26, 28,
                   32, 36, 37, 39, 40, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55]  # About 60% of the nodes
 hidden_nodes = list(set(range(56-1)) - set(np.array(observed_nodes)-1))
-hidden_nodes = []
+#hidden_nodes = []
 
 # Assumption of constant Z loads on hidden nodes
 constant_load_hidden_nodes = True

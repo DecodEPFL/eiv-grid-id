@@ -122,7 +122,7 @@ def simulate(network, active_profiles, reactive_profiles, gaussian_loads, loads,
 
     print(np.mean(np.abs(y_bus[np.abs(y_bus)>0])))
     if verbose:
-        print("Simulation done! Please find the results in data/simulation_output/" + net.name + ".npz")
+        print("Simulation done! Please find the results in data/simulations_output/" + net.name + ".npz")
 
 
 if __name__ == '__main__':

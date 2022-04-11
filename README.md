@@ -5,8 +5,10 @@
 This project relies on Python 3.8 or above.
 To get started, first install python and pip.
 Then download or clone this repository,
-and make sure to unzip the archive
+and unzip the archive
 `data/profiles/load_profiles.zip`.
+Make sure the files are unzipped in the same 
+folder and not in a new one.
 It should give you two large `.npy` files that
 you can leave in this folder.
 
@@ -29,9 +31,9 @@ The corresponding packages are commented in `requirements.txt`
 
 ## Running the scripts
 The script `simulate_network.py` simulates a network based on P,Q load profiles. 
-The results are saved in `data/simulation_output`.
+The results are saved in `data/simulations_output`.
 The script `identify_network.py` executes several identification methods to estimate the parameters of a network based on
-the measurements in `data/simulation_output/[NETWORK_NAME].npz`. The script `plot_results.py` displays the results of
+the measurements in `data/simulations_output/[NETWORK_NAME].npz`. The script `plot_results.py` displays the results of
 `identify_network.py` in the data folder if they are available.
 
 The following commands provides details on exact parameters.
@@ -68,6 +70,6 @@ Simulations for the manuscript *Bayesian error-in-variable models for the identi
 (to be submitted in Transactions on Smart Grids) have been generated using the following commands.
 ``` shell script
 python simulate_network.py -vqte --network ieee123center
-python identify_network.py -vqe --max-iterations 20 --network ieee123center --phases 012
+python identify_network.py -vwq --max-iterations 20 --network ieee123center --phases 012
 python plot_results.py -v --network ieee123center
 ```
