@@ -3,7 +3,6 @@ import os
 import numpy as np
 import pandas as pd
 import pkgutil
-import cupy
 
 # Simulation parameters
 seed = 131
@@ -28,4 +27,6 @@ pd.set_option('display.max_columns', 500)
 GPU_AVAILABLE = pkgutil.find_loader('cupy')
 # Use this to switch GPU if one is in use.
 # If all GPUs are used you are in bad luck, wait for your turn
-cupy.cuda.Device(3).use()
+if GPU_AVAILABLE:
+    import cupy
+    cupy.cuda.Device(1).use()

@@ -105,9 +105,21 @@ class NetData3P(Net):
         """
         run_net = self.deepcopy()
         pp.runpp_3ph(run_net, numba=False)
-        y_bus0 = run_net['_ppc0']['internal']['Ybus'].todense()
-        y_bus1 = run_net['_ppc1']['internal']['Ybus'].todense()
-        y_bus2 = run_net['_ppc2']['internal']['Ybus'].todense()
+
+        if type(run_net['_ppc0']['internal']['Ybus']) is not np.ndarray:
+            y_bus0 = run_net['_ppc0']['internal']['Ybus'].todense()
+        else:
+            y_bus0 = run_net['_ppc0']['internal']['Ybus']
+
+        if type(run_net['_ppc1']['internal']['Ybus']) is not np.ndarray:
+            y_bus1 = run_net['_ppc1']['internal']['Ybus'].todense()
+        else:
+            y_bus1 = run_net['_ppc1']['internal']['Ybus']
+
+        if type(run_net['_ppc2']['internal']['Ybus']) is not np.ndarray:
+            y_bus2 = run_net['_ppc2']['internal']['Ybus'].todense()
+        else:
+            y_bus2 = run_net['_ppc2']['internal']['Ybus']
 
         y_012 = np.kron(y_bus0, np.diag([1, 0, 0])) + np.kron(y_bus1, np.diag([0, 1, 0])) \
                 + np.kron(y_bus2, np.diag([0, 0, 1]))

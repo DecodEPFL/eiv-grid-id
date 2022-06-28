@@ -1,11 +1,12 @@
 import numpy as np
 
-from conf import conf
+from conf import conf, simulation
 from src.simulation.simulation_3ph import SimulatedNet3P
 from src.simulation.load_profile import load_profile_from_numpy
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement
 from src.simulation import net_templates_3ph
 from src.simulation.net_templates_3ph import ieee123_types
+from src.simulation.lines import admittance_sequence_to_phase, admittance_phase_to_sequence
 
 
 def make_net(name, y_bus=None):
@@ -121,19 +122,26 @@ def generate_loads(net, load_params=None, verbose=True):
             load_p, load_q = np.zeros_like(load_asym[0]), np.zeros_like(load_asym[0])
             pprint("Done!")
 
+        a = simulation.load_constantness
         if constant_load_nodes is not None:
             for i in range(len(net.load.bus)):
                 if net.load.bus.values[i] in constant_load_nodes:
-                    load_p[:, i] = net.load.p_mw[net.load.p_mw.index[i]]
-                    load_q[:, i] = net.load.q_mvar[net.load.q_mvar.index[i]]
+                    load_p[:, i] = (1.0 - a) * load_p[:, i] + a * net.load.p_mw[net.load.p_mw.index[i]]
+                    load_q[:, i] = (1.0 - a) * load_q[:, i] + a * net.load.q_mvar[net.load.q_mvar.index[i]]
             for i in range(len(net.asymmetric_load.bus)):
                 if net.asymmetric_load.bus.values[i] in constant_load_nodes:
-                    load_asym[0][:, i] = net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
-                    load_asym[1][:, i] = net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
-                    load_asym[2][:, i] = net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
-                    load_asym[3][:, i] = net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
-                    load_asym[4][:, i] = net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
-                    load_asym[5][:, i] = net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
+                    load_asym[0][:, i] = (1.0 - a) * load_asym[0][:, i] \
+                                         + a * net.asymmetric_load.p_a_mw[net.asymmetric_load.p_a_mw.index[i]]
+                    load_asym[1][:, i] = (1.0 - a) * load_asym[1][:, i] \
+                                         + a * net.asymmetric_load.p_b_mw[net.asymmetric_load.p_b_mw.index[i]]
+                    load_asym[2][:, i] = (1.0 - a) * load_asym[2][:, i] \
+                                         + a * net.asymmetric_load.p_c_mw[net.asymmetric_load.p_c_mw.index[i]]
+                    load_asym[3][:, i] = (1.0 - a) * load_asym[3][:, i] \
+                                         + a * net.asymmetric_load.q_a_mvar[net.asymmetric_load.q_a_mvar.index[i]]
+                    load_asym[4][:, i] = (1.0 - a) * load_asym[4][:, i] \
+                                         + a * net.asymmetric_load.q_b_mvar[net.asymmetric_load.q_b_mvar.index[i]]
+                    load_asym[5][:, i] = (1.0 - a) * load_asym[5][:, i] \
+                                         + a * net.asymmetric_load.q_c_mvar[net.asymmetric_load.q_c_mvar.index[i]]
 
         pprint("Saving loads...")
         sim_PQ = {'p': load_p, 'q': load_q, 'a': load_asym, 't': times}
@@ -361,8 +369,13 @@ def reduce_network(net, voltage, current, hidden_nodes, laplacian=False, reduce_
             idx_tored.append(i)
             shunts[i] = np.divide(np.mean(current[:, i], axis=0), np.mean(voltage[:, i], axis=0))
 
-    y_bus = net.kron_reduction(idx_tored, y_bus + np.diag(shunts))
-    idx_todel.extend(idx_tored)
+    idx_tored = np.array(idx_tored)
+    y_bus = admittance_phase_to_sequence(y_bus + np.diag(shunts))
+    y_bus = np.kron(net.kron_reduction(idx_tored[idx_tored % 3 == 0]/3, y_bus[::3,::3]), np.diag([1, 0, 0])) \
+            + np.kron(net.kron_reduction((idx_tored[idx_tored % 3 == 1] - 1)/3, y_bus[1::3,1::3]), np.diag([0, 1, 0])) \
+            + np.kron(net.kron_reduction((idx_tored[idx_tored % 3 == 2] - 2)/3, y_bus[2::3,2::3]), np.diag([0, 0, 1]))
+    y_bus = admittance_sequence_to_phase(y_bus)
+    idx_todel.extend(idx_tored.tolist())
 
     pprint("Done!")
     pprint("reduced elements: " + str(np.array(idx_todel) + 1))

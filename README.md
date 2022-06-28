@@ -5,12 +5,9 @@
 This project relies on Python 3.8 or above.
 To get started, first install python and pip.
 Then download or clone this repository,
-and unzip the archive
-`data/profiles/load_profiles.zip`.
-Make sure the files are unzipped in the same 
-folder and not in a new one.
+and unzip the archive `load_profiles.zip`.
 It should give you two large `.npy` files that
-you can leave in this folder.
+you need to place in the folder `data/profiles/`.
 
 Make sure you are in the correct venv
 (if your python install is encapsulated in one) using

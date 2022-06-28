@@ -157,6 +157,9 @@ def plot_results(network, max_plot_y, max_plot_err, color_scale, sequence, verbo
         cov_est = unvectorize_matrix(make_complex_vector(v @ np.sqrt(w) / nodes), (nodes, nodes))
         pprint("Done!")
 
+        cov_error_metrics = error_metrics(sim_STLS['e'], sim_STLS['b'])
+        print(cov_error_metrics)
+
         pprint("Plotting standard estimation methods results...")
         plot_heatmap(np.abs(y_tls - y_bus), "tls_errors", minval=min_plot, maxval=max_plot_err, powernorm=color_scale)
 

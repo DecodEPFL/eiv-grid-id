@@ -107,5 +107,8 @@ class NetData(Net):
         """
         run_net = self.deepcopy()
         pp.runpp(run_net, numba=False)
-        y_bus = run_net['_ppc']['internal']['Ybus'].todense()
-        return y_bus
+
+        if type(run_net['_ppc']['internal']['Ybus']) is not np.ndarray:
+            return run_net['_ppc']['internal']['Ybus'].todense()
+        else:
+            return run_net['_ppc']['internal']['Ybus']

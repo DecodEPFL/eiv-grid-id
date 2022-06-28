@@ -82,11 +82,12 @@ def generate_loads(net, load_params=None, verbose=True):
                                                                                for i in range(len(net.load.q_mvar))]))
             pprint("Done!")
 
+        a = simulation.load_constantness
         if constant_load_nodes is not None:
             for i in range(len(net.load.bus)):
                 if net.load.bus.values[i] in constant_load_nodes:
-                    load_p[:, i] = net.load.p_mw[net.load.p_mw.index[i]]
-                    load_q[:, i] = net.load.q_mvar[net.load.q_mvar.index[i]]
+                    load_p[:, i] = (1.0 - a) * load_p[:, i] + a * net.load.p_mw[net.load.p_mw.index[i]]
+                    load_q[:, i] = (1.0 - a) * load_q[:, i] + a * net.load.q_mvar[net.load.q_mvar.index[i]]
 
         pprint("Saving loads...")
         sim_PQ = {'p': load_p, 'q': load_q, 't': times}

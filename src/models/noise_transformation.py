@@ -103,29 +103,60 @@ def naive_noise_covariance(
     :param inverted: boolean showing if the inverse matrix or the original one should be returned
     :return: covariance matrix (or inverse) as a sparse csc_matrix
     """
-    # Vectorize data
-    measurement_vect = vectorize_matrix(measurement)
-    m, f = np.abs(measurement_vect), np.angle(measurement_vect)
+    # If we have a vector standard derivation
+    if type(sd_magnitude) is not float and sd_magnitude.size == measurement.shape[1]:
+        real_variance = np.zeros(measurement.shape)
+        imag_variance = np.zeros(measurement.shape)
+        real_imag_covariance = np.zeros(measurement.shape)
 
-    # Calculate variance in polar coordinates
-    m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
+        # Calculate sub-matrices (also diagonals) for each element of measurements
+        for i in range(sd_magnitude.size):
+            # Vectorize data
+            m, f = np.abs(measurement[:, i]), np.angle(measurement[:, i])
 
-    # Apply linearization
-    real_var = (np.cos(f) ** 2) * m_var + (m ** 2) * (np.sin(f) ** 2) * f_var
-    imag_var = (np.sin(f) ** 2) * m_var + (m ** 2) * (np.cos(f) ** 2) * f_var
-    cov = np.sin(f) * np.cos(f) * (m_var - (m ** 2) * f_var)
+            # Calculate variance in polar coordinates
+            m_var, f_var = sd_magnitude[i] ** 2, sd_phase ** 2
+
+            real_variance[:, i] = (np.cos(f) ** 2) * m_var + (m ** 2) * (np.sin(f) ** 2) * f_var
+            imag_variance[:, i] = (np.sin(f) ** 2) * m_var + (m ** 2) * (np.cos(f) ** 2) * f_var
+            real_imag_covariance[:, i] = np.sin(f) * np.cos(f) * (m_var - (m ** 2) * f_var)
+
+        # Then vectorize the diagonals in the same way as the data would be vectorized,
+        # to create the blocks of the covariance matrix
+        real_variance = vectorize_matrix(real_variance)
+        imag_variance = vectorize_matrix(imag_variance)
+        real_imag_covariance = vectorize_matrix(real_imag_covariance)
+
+    # If we have the same standard derivation everywhere
+    else:
+        if type(sd_magnitude) is not float and sd_magnitude.size > 1:
+            sd_magnitude = sd_magnitude[0]
+
+        # Vectorize data
+        measurement_vect = vectorize_matrix(measurement)
+        m, f = np.abs(measurement_vect), np.angle(measurement_vect)
+
+        # Calculate variance in polar coordinates
+        m_var, f_var = sd_magnitude ** 2, sd_phase ** 2
+
+        # Calculate blocks of the covariance matrix
+        real_variance = (np.cos(f) ** 2) * m_var + (m ** 2) * (np.sin(f) ** 2) * f_var
+        imag_variance = (np.sin(f) ** 2) * m_var + (m ** 2) * (np.cos(f) ** 2) * f_var
+        real_imag_covariance = np.sin(f) * np.cos(f) * (m_var - (m ** 2) * f_var)
 
     # Invert matrix if needed
     if inverted:
-        real_var_inv = np.divide(1, real_var - np.multiply(cov, np.divide(cov, imag_var)))
-        imag_var_inv = np.divide(1, imag_var - np.multiply(cov, np.divide(cov, real_var)))
-        cov_inv = -np.divide(np.multiply(cov, real_var_inv), imag_var)
-        real_var, imag_var, cov = real_var_inv, imag_var_inv, cov_inv
+        real_var_inv = np.divide(1, real_variance - np.multiply(real_imag_covariance,
+                                                                np.divide(real_imag_covariance, imag_variance)))
+        imag_var_inv = np.divide(1, imag_variance - np.multiply(real_imag_covariance,
+                                                                np.divide(real_imag_covariance, real_variance)))
+        cov_inv = -np.divide(np.multiply(real_imag_covariance, real_var_inv), imag_variance)
+        real_variance, imag_variance, real_imag_covariance = real_var_inv, imag_var_inv, cov_inv
 
     # Construct block 2x2 result
     sigma = sparse.bmat([
-        [sparse.diags(real_var), sparse.diags(cov)],
-        [sparse.diags(cov), sparse.diags(imag_var)]
+        [sparse.diags(real_variance), sparse.diags(real_imag_covariance)],
+        [sparse.diags(real_imag_covariance), sparse.diags(imag_variance)]
     ], format='csr')
     return sigma
 
