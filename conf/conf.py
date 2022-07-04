@@ -6,7 +6,7 @@ import pkgutil
 
 # Simulation parameters
 seed = 131
-noise_level = 1
+noise_level = 0.001
 
 # Technical settings
 ROOT_DIR = Path(__file__).parent.parent.absolute()

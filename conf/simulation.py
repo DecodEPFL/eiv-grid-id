@@ -11,20 +11,20 @@ list6 = [5, 14, 15, 20, 25, 29, 31, 34, 38, 41, 45, 54]     #79%
 
 observed_nodes = list1 + list2 + list3 + list4 + list5 #+ list6
 hidden_nodes = list(set(range(1,56)) - set(np.array(observed_nodes)-1))
-#hidden_nodes = []
+hidden_nodes = []
 
 # Assumption of constant Z loads on hidden nodes
 constant_load_hidden_nodes = True
-load_constantness = 0.84
+load_constantness = 1.0 #0.84
 
 # Week during which the sample size starts
 selected_weeks = np.array([0])  # 0 is week 12 for the small dataset. Replace by 12 of using the full year data.
 
 # Total sample size on which block averaging is performed
-days = 7*len(selected_weeks) #7*len(selected_weeks)
+days = 1*len(selected_weeks) #7*len(selected_weeks)
 
 # Number of averaged blocks
-time_steps = 24 * 60 * 7  # 15000 is max capable for GPU RTX 3090
+time_steps = 24 * 60 #* 7  # 15000 is max capable for GPU RTX 3090
 
 # Sensor sampling frequency
 measurement_frequency = 50 # [Hz] # 50

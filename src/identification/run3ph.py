@@ -86,7 +86,8 @@ def build_complex_prior(nodes, lambdaprime, y_tls, E, DT, laplacian=False,
     # TODO: finish this
 
 
-def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, max_iterations=10, verbose=True):
+def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
+                     max_iterations=10, use_pmu_data=True, verbose=True):
     """
     # Performing the ordinary least squares, total least squares, and lasso indentifications of the network.
 
@@ -96,6 +97,7 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
     :param phases_ids: if not None, perform identification sequence per sequence or phase per phase
     :param laplacian: is the admittance matrix Laplacian?
     :param max_iterations: maximum number of lasso iterations
+    :param use_pmu_data: removes the phase synchronization if false
     :param verbose: verbose ON/OFF
     :param phase_ids: if sequence
     """
@@ -117,13 +119,20 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
                 DT = duplication_matrix(nodes)
                 E = elimination_sym_matrix(nodes)
 
-            noisy_voltage = voltage.copy()
-            noisy_current = current.copy()
-            if laplacian:
-                noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
+            if use_pmu_data:
+                centered_voltage = voltage.copy()
+                centered_current = current.copy()
             else:
-                noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
-                noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
+                centered_voltage = np.abs(voltage.copy())
+                centered_current = ((current * voltage.conj()) / np.abs(voltage)).copy()
+
+            if laplacian:
+                centered_voltage = centered_voltage - np.mean(centered_voltage)
+            else:
+                centered_voltage = centered_voltage - np.tile(np.mean(centered_voltage, axis=0),
+                                                              (centered_voltage.shape[0], 1))
+                centered_current = centered_current - np.tile(np.mean(centered_current, axis=0),
+                                                              (centered_current.shape[0], 1))
 
             # OLS Identification
             """
@@ -134,7 +143,7 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
 
             pprint("OLS identification...")
             ols = ComplexRegression()
-            ols.fit(noisy_voltage, noisy_current)
+            ols.fit(centered_voltage, centered_current)
             y_ols = ols.fitted_admittance_matrix
             pprint("Done!")
 
@@ -147,7 +156,7 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
 
             pprint("TLS identification...")
             tls = TotalLeastSquares()
-            tls.fit(noisy_voltage, noisy_current)
+            tls.fit(centered_voltage, centered_current)
             y_tls = tls.fitted_admittance_matrix
             pprint("Done!")
 
@@ -175,7 +184,7 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
                 y_lasso = (y_ols + y_ols.T).copy() / 2
 
                 pprint("Lasso identification...")
-                lasso.fit(noisy_voltage, noisy_current, y_init=y_lasso)
+                lasso.fit(centered_voltage, centered_current, y_init=y_lasso)
                 y_lasso = lasso.fitted_admittance_matrix
                 pprint("Done!")
             else:
@@ -306,6 +315,8 @@ def eiv_fim(name, voltage, current, voltage_sd_polar, current_sd_polar, pmu_rati
             print(a)
     else:
         pprint = lambda a: None
+
+    raise NotImplementedError
 
     tls = TotalLeastSquares()
 

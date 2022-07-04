@@ -77,7 +77,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
 
     y_ols, y_tls, y_lasso = run_fcns.standard_methods(name, noisy_voltage if redo_standard_methods else None,
                                                       noisy_current, phases_ids if phases == "012" else None,
-                                                      laplacian, max_iterations, verbose)
+                                                      laplacian, max_iterations, not unsynchronized, verbose)
 
     if continue_id:
         pprint("Loading previous bayesian eiv identification result...")
@@ -90,6 +90,10 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
         y_init = (y_tls + y_tls.T).copy()/2
 
     y_exact = y_bus if exact and not laplacian else None
+
+    # TODO: fix this
+    pprint("Warning: Using exact y_bus as starting point due to difficulties with standard methods.")
+    y_init = y_bus + 0.001 + 0.001j
 
     y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current, phases_ids,
                                                                         voltage_magnitude_sd + 1j*voltage_phase_sd,
