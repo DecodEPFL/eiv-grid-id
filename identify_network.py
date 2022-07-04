@@ -19,10 +19,11 @@ from src.simulation.lines import admittance_phase_to_sequence, measurement_phase
 @click.option('--laplacian', "-l", is_flag=True, help='Is the matrix laplacian')
 @click.option('--weighted', "-w", is_flag=True, help='Use covariance matrices as weights')
 @click.option('--uncertainty', "-u", is_flag=True, help='Analyse error covariance')
+@click.option('--unsynchronized', "-r", is_flag=True, help='Simulate smart meter data without phase synchronization')
 @click.option('--verbose', "-v", is_flag=True, help='Activates verbosity')
 
-def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
-             phases, sequence, exact, laplacian, weighted, uncertainty, verbose):
+def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phases,
+             sequence, exact, laplacian, weighted, uncertainty, unsynchronized, verbose):
     if verbose:
         def pprint(a):
             print(a)
@@ -95,7 +96,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
                                                                         current_magnitude_sd + 1j*current_phase_sd,
                                                                         pmu_ratings, y_init, y_exact, laplacian,
                                                                         weighted, max_iterations if redo_STLS else 0,
-                                                                        verbose)
+                                                                        not unsynchronized, verbose)
 
     if continue_id:
         sparse_tls_cov_iterations = sparse_tls_cov_old_iterations.extend(sparse_tls_cov_iterations)
@@ -106,7 +107,7 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id,
         pprint("Done!")
 
     # Error covariance analysis
-    if uncertainty:
+    if uncertainty and not three_phases and not unsynchronized:
         fim_wtls, cov_wtls, expected_max_rrms = run_fcns.eiv_fim(name, voltage, current,
                                                                  voltage_magnitude_sd + 1j * voltage_phase_sd,
                                                                  current_magnitude_sd + 1j * current_phase_sd,

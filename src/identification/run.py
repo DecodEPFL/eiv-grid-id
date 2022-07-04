@@ -6,7 +6,7 @@ from src.models.matrix_operations import make_real_vector, vectorize_matrix, dup
     transformation_matrix, unvectorize_matrix, elimination_sym_matrix, elimination_lap_matrix
 from src.models.regression import ComplexRegression, BayesianRegression
 from src.models.error_in_variable import TotalLeastSquares, BayesianEIVRegression
-from src.models.noise_transformation import average_true_noise_covariance
+from src.models.noise_transformation import average_true_noise_covariance, naive_noise_covariance
 from src.models.smooth_prior import SmoothPrior, SparseSmoothPrior
 from conf.conf import DATA_DIR, seed
 from conf import identification
@@ -170,7 +170,7 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, prior_typ
     tls_bus_weights = np.zeros_like(y_bus)
     tls_bus_centers = np.zeros_like(y_bus)
 
-    if prior_type == "optimal":
+    if "optimal" in prior_type:
         # Node 2
         tls_bus_weights[0, :], tls_bus_weights[:, 0] = (1+1j), (1+1j)
         tls_bus_weights[0, 0] = 0
@@ -196,7 +196,7 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, prior_typ
         #tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
         #tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
 
-    elif prior_type == "suboptimal":
+    elif "suboptimal" in prior_type:
         # Node 10
         tls_bus_weights[7, :], tls_bus_weights[:, 7] = (1+1j), (1+1j)
         tls_bus_weights[7, 7] = 0
@@ -220,33 +220,14 @@ def add_known_lines(nodes, prior, lambdaprime, y_bus, laplacian=False, prior_typ
         #tls_bus_centers[3, 36], tls_bus_centers[36, 3] = y_bus[3, 36], y_bus[36, 3]
         #tls_bus_weights[37, 38], tls_bus_weights[38, 37] = (1+1j), (1+1j)
         #tls_bus_centers[37, 38], tls_bus_centers[38, 37] = y_bus[37, 38], y_bus[38, 37]
-    elif prior_type == "wrong":
-        # Node 2
-        tls_bus_weights[0, :], tls_bus_weights[:, 0] = (1+1j), (1+1j)
-        tls_bus_weights[0, 0] = 0
-        tls_bus_centers[0, :], tls_bus_centers[:, 0] = 0, 0
-        tls_bus_centers[1, 0], tls_bus_centers[0, 1] = y_bus[1, 0], y_bus[0, 1]
-        #tls_bus_centers[1, 2], tls_bus_centers[2, 1] = y_bus[1, 2], y_bus[2, 1]
-
-        # Node 50 & 51
-        tls_bus_weights[26, :], tls_bus_weights[:, 26] = (1+1j), (1+1j)
-        tls_bus_weights[25, :], tls_bus_weights[:, 25] = (1+1j), (1+1j)
-        tls_bus_weights[26, 26] = 0
-        tls_bus_weights[25, 25] = 0
-        tls_bus_centers[26, :], tls_bus_centers[:, 26] = 0, 0
-        tls_bus_centers[25, :], tls_bus_centers[:, 25] = 0, 0
-        tls_bus_centers[24, 25], tls_bus_centers[25, 24] = y_bus[24, 25], y_bus[25, 24]
-        tls_bus_centers[26, 25], tls_bus_centers[25, 26] = y_bus[26, 25], y_bus[25, 26]
-        tls_bus_centers[26, 27], tls_bus_centers[27, 26] = y_bus[26, 27], y_bus[27, 26]
-        tls_bus_centers[26, 28], tls_bus_centers[28, 26] = y_bus[26, 28], y_bus[28, 26]
 
     # Vectorize and add to the rest
     tls_bus_weights = np.where(np.abs(make_real_vector(E @ vectorize_matrix(tls_bus_weights))) > 0)[0]
     tls_bus_centers = make_real_vector(E @ vectorize_matrix(tls_bus_centers))
 
     prior.add_exact_adaptive_prior(indices=tls_bus_weights,
-                                   values=1.1 * tls_bus_centers[tls_bus_weights],
-                                   weights=0.01 * lambdaprime,
+                                   values=tls_bus_centers[tls_bus_weights] * (1.1 if "wrong" in prior_type else 1.0),
+                                   weights=lambdaprime * (0.01 if "wrong" in prior_type else 1.0),
                                    orders=SmoothPrior.LAPLACE)
 
     """
@@ -364,8 +345,8 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
     return y_ols, y_tls, y_lasso
 
 
-def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, y_exact=None, laplacian=False, weighted=False, max_iterations=50, verbose=True):
+def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_sd_polar, pmu_ratings, y_init,
+                 y_exact=None, laplacian=False, weighted=False, max_iterations=50, use_pmu_data=True, verbose=True):
     # L1 Regularized weighted TLS
     """
     # Computing the Maximum A Posteriori Estimator,
@@ -387,6 +368,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
     :param laplacian: is the admittance matrix Laplacian?
     :param weighted: Use covariances or just identity (classical TLS)?
     :param max_iterations: maximum number of lasso iterations
+    :param use_pmu_data: removes the phase synchronization if false
     :param verbose: verbose ON/OFF
     """
 
@@ -402,7 +384,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
                             identification.contrast_each_row, identification.regularize_diag)
 
     if y_exact is not None:
-        prior = add_known_lines(nodes, prior, identification.lambdaprime, y_exact, laplacian=False, prior_type="suboptimal")
+        prior = add_known_lines(nodes, prior, identification.lambdaprime, y_exact, laplacian=False, prior_type="optimal")
         #prior = build_loads_id_prior(nodes, y_exact)  # Not working!
 
     if laplacian:
@@ -418,24 +400,39 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
     if max_iterations > 0 and voltage is not None and current is not None:
         inv_sigma_voltage = None
         inv_sigma_current = None
-        if weighted:
+        centered_voltage = voltage.copy()
+        centered_current = current.copy()
+
+        if weighted and use_pmu_data:
             pprint("Calculating covariance matrices...")
             inv_sigma_voltage = average_true_noise_covariance(voltage, np.real(voltage_sd_polar),
                                                               np.imag(voltage_sd_polar), True)
             inv_sigma_current = average_true_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
                                                               np.imag(current_sd_polar), True)
             pprint("Done!")
+        elif weighted and not use_pmu_data:
+            centered_voltage = np.abs(voltage.copy())
+            centered_current = ((current * voltage.conj()) / np.abs(voltage)).copy()
 
-        noisy_voltage = voltage.copy()
-        noisy_current = current.copy()
+            pprint("Calculating covariance matrices...")
+            inv_sigma_voltage = naive_noise_covariance(centered_voltage, np.real(voltage_sd_polar),
+                                                          np.imag(voltage_sd_polar) * 100, False)
+            inv_sigma_current = naive_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
+                                                       np.imag(current_sd_polar), True)
+            # invert only diagonal elements (off diagonal is zero)
+            inv_sigma_voltage.data = 1.0 / inv_sigma_voltage.data
+            pprint("Done!")
+
         if laplacian:
-            noisy_voltage = noisy_voltage - np.mean(noisy_voltage)
+            centered_voltage = centered_voltage - np.mean(centered_voltage)
         else:
-            noisy_voltage = noisy_voltage - np.tile(np.mean(noisy_voltage, axis=0), (noisy_voltage.shape[0], 1))
-            noisy_current = noisy_current - np.tile(np.mean(noisy_current, axis=0), (noisy_current.shape[0], 1))
+            centered_voltage = centered_voltage - np.tile(np.mean(centered_voltage, axis=0),
+                                                          (centered_voltage.shape[0], 1))
+            centered_current = centered_current - np.tile(np.mean(centered_current, axis=0),
+                                                          (centered_current.shape[0], 1))
 
         pprint("STLS identification...")
-        sparse_tls_cov.fit(noisy_voltage, noisy_current, inv_sigma_voltage, inv_sigma_current, y_init=y_init)
+        sparse_tls_cov.fit(centered_voltage, centered_current, inv_sigma_voltage, inv_sigma_current, y_init=y_init)
         pprint("Done!")
 
         pprint("Extracting results...")

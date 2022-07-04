@@ -1,6 +1,6 @@
 import numpy as np
 
-from conf import conf
+from conf import conf, simulation
 from src.simulation.simulation import SimulatedNet
 from src.simulation.load_profile import load_profile_from_numpy, generate_gaussian_load
 from src.simulation.noise import filter_and_resample_measurement, add_polar_noise_to_measurement

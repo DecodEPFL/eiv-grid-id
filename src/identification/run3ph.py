@@ -211,8 +211,8 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False, m
     return y_ols, y_tls, y_lasso
 
 
-def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_sd_polar, pmu_ratings,
-                 y_init, y_exact=None, laplacian=False, weighted=False, max_iterations=50, verbose=True):
+def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_sd_polar, pmu_ratings, y_init,
+                 y_exact=None, laplacian=False, weighted=False, max_iterations=50, use_pmu_data=True, verbose=True):
     # L1 Regularized weighted TLS
     """
     # Computing the Maximum Likelihood Estimator,
@@ -234,6 +234,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
     :param laplacian: is the admittance matrix Laplacian?
     :param weighted: Use covariances or just identity (classical TLS)?
     :param max_iterations: maximum number of lasso iterations
+    :param use_pmu_data: removes the phase synchronization if false
     :param verbose: verbose ON/OFF
     """
     if verbose:
@@ -254,7 +255,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
                                  voltage_sd_polar, current_sd_polar, pmu_ratings[phases_ids == i],
                                  y_init[phases_ids == i, :][:, phases_ids == i], None if y_exact is None else
                                  y_exact[phases_ids == i, :][:, phases_ids == i], laplacian, weighted, max_iterations,
-                                 verbose)
+                                 use_pmu_data, verbose)
             y_fin[np.outer(phases_ids == i, phases_ids == i)] = y_sparse_tls_cov.flatten()
 
         sparse_tls_cov_iterations = []
