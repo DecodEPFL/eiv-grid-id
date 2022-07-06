@@ -92,8 +92,12 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
     y_exact = y_bus if exact and not laplacian else None
 
     # TODO: fix this
-    pprint("Warning: Using exact y_bus as starting point due to difficulties with standard methods.")
-    y_init = y_bus + 0.001 + 0.001j
+    if unsynchronized:
+        pprint("Warning: Using lasso as starting point due to TLS difficulties with biased data.")
+        y_init = (y_lasso + y_lasso.T)/2
+        #XR ratio can improve a lot the bias of lasso
+        #xr_ratio = 0.5
+        #y_init = y_init * (1 - xr_ratio*1j)
 
     y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current, phases_ids,
                                                                         voltage_magnitude_sd + 1j*voltage_phase_sd,

@@ -289,8 +289,14 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
 
         pprint("OLS identification...")
         ols = ComplexRegression()
-        ols.fit(centered_voltage, centered_current)
-        y_ols = ols.fitted_admittance_matrix
+        if use_pmu_data:
+            ols.fit(centered_voltage, centered_current)
+            y_ols = ols.fitted_admittance_matrix
+        else:
+            ols.fit(centered_voltage, np.real(centered_current))
+            y_ols = ols.fitted_admittance_matrix + 0j
+            ols.fit(centered_voltage, np.imag(centered_current))
+            y_ols += 1j * ols.fitted_admittance_matrix
         pprint("Done!")
 
         # TLS Identification
@@ -302,8 +308,14 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
 
         pprint("TLS identification...")
         tls = TotalLeastSquares()
-        tls.fit(centered_voltage, centered_current)
-        y_tls = tls.fitted_admittance_matrix
+        if use_pmu_data:
+            tls.fit(centered_voltage, centered_current)
+            y_tls = tls.fitted_admittance_matrix
+        else:
+            tls.fit(centered_voltage, np.real(centered_current))
+            y_tls = tls.fitted_admittance_matrix + 0j
+            tls.fit(centered_voltage, np.imag(centered_current))
+            y_tls += 1j * tls.fitted_admittance_matrix
         pprint("Done!")
 
         # Adaptive Lasso
@@ -407,8 +419,12 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
     if max_iterations > 0 and voltage is not None and current is not None:
         inv_sigma_voltage = None
         inv_sigma_current = None
-        centered_voltage = voltage.copy()
-        centered_current = current.copy()
+        if use_pmu_data:
+            centered_voltage = voltage.copy()
+            centered_current = current.copy()
+        else:
+            centered_voltage = np.abs(voltage.copy())
+            centered_current = ((current * voltage.conj()) / np.abs(voltage)).copy()
 
         if weighted and use_pmu_data:
             pprint("Calculating covariance matrices...")
@@ -418,13 +434,10 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
                                                               np.imag(current_sd_polar), True)
             pprint("Done!")
         elif weighted and not use_pmu_data:
-            centered_voltage = np.abs(voltage.copy())
-            centered_current = ((current * voltage.conj()) / np.abs(voltage)).copy()
-
             pprint("Calculating covariance matrices...")
             inv_sigma_voltage = naive_noise_covariance(centered_voltage, np.real(voltage_sd_polar),
                                                           np.imag(voltage_sd_polar) * 100, False)
-            inv_sigma_current = naive_noise_covariance(current, np.real(current_sd_polar) * pmu_ratings,
+            inv_sigma_current = naive_noise_covariance(centered_current, np.real(current_sd_polar) * pmu_ratings,
                                                        np.imag(current_sd_polar), True)
             # invert only diagonal elements (off diagonal is zero)
             inv_sigma_voltage.data = 1.0 / inv_sigma_voltage.data

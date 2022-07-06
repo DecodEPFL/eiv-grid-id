@@ -143,8 +143,14 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
 
             pprint("OLS identification...")
             ols = ComplexRegression()
-            ols.fit(centered_voltage, centered_current)
-            y_ols = ols.fitted_admittance_matrix
+            if use_pmu_data:
+                ols.fit(centered_voltage, centered_current)
+                y_ols = ols.fitted_admittance_matrix
+            else:
+                ols.fit(centered_voltage, np.real(centered_current))
+                y_ols = ols.fitted_admittance_matrix + 0j
+                ols.fit(centered_voltage, np.imag(centered_current))
+                y_ols += 1j * ols.fitted_admittance_matrix
             pprint("Done!")
 
             # TLS Identification
@@ -156,8 +162,14 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
 
             pprint("TLS identification...")
             tls = TotalLeastSquares()
-            tls.fit(centered_voltage, centered_current)
-            y_tls = tls.fitted_admittance_matrix
+            if use_pmu_data:
+                tls.fit(centered_voltage, centered_current)
+                y_tls = tls.fitted_admittance_matrix
+            else:
+                tls.fit(centered_voltage, np.real(centered_current))
+                y_tls = tls.fitted_admittance_matrix + 0j
+                tls.fit(centered_voltage, np.imag(centered_current))
+                y_tls += 1j * tls.fitted_admittance_matrix
             pprint("Done!")
 
             # Adaptive Lasso

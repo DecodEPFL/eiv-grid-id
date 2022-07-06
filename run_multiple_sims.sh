@@ -24,17 +24,17 @@ if [ "$n_flag" == "true" ]; then
     sed -i "s/seed = 131/seed = $seed/g" conf/conf.py
     echo "seed $seed"
 
-    python3 simulate_network.py -vqte --network ieee123center
+    python3 simulate_network.py -ve --network cigre_mv_feeder1
 
-    for i in 0.1 #0.2 0.5 1 2 5 10
+    for i in 0.01 0.1 0.2 0.5 1 2 5 10
     do
       echo "Test with noise level $i"
 
       sed -i "s/noise_level = 1/noise_level = $i/g" conf/conf.py
 
-      python3 simulate_network.py -qtde --network ieee123center
-      python3 identify_network.py -q --max-iterations 20 --network ieee123center --phases 012
-      python3 plot_results.py -v --network ieee123center
+      python3 simulate_network.py -de --network cigre_mv_feeder1
+      python3 identify_network.py -rw --max-iterations 4000 --network cigre_mv_feeder1
+      python3 plot_results.py -v --network cigre_mv_feeder1
 
       sed -i "s/noise_level = $i/noise_level = 1/g" conf/conf.py
     done
