@@ -97,7 +97,7 @@ def plot_results(network, max_plot_y, max_plot_err, color_scale, sequence, verbo
         sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"),
                            allow_pickle=True)
         y_sparse_tls_cov = correct_component(sim_STLS["y"])
-        sparse_tls_cov_iterations = sim_STLS["i"]
+        sparse_tls_cov_iterations = sim_STLS["i"].tolist()
         print("Done!")
 
 
@@ -110,6 +110,12 @@ def plot_results(network, max_plot_y, max_plot_err, color_scale, sequence, verbo
         with open(conf.conf.DATA_DIR / 'sparse_tls_error_metrics.txt', 'w') as f:
             print(sparse_tls_cov_metrics, file=f)
         print(sparse_tls_cov_metrics)
+
+        # print extrapolation of asymptotic error
+        e = (sparse_tls_cov_errors[0], sparse_tls_cov_errors[len(sparse_tls_cov_errors)/2],
+             sparse_tls_cov_errors[len(sparse_tls_cov_errors)-1])
+        print(f"extrapolated asymptotic error {(e[1]*e[1] - e[2] * e[0]) / (2 * e[1] - e[0] - e[2])}")
+
         plot_heatmap(np.abs(y_sparse_tls_cov), "y_sparse_tls_cov",
                      minval=min_plot, maxval=max_plot_y, powernorm=color_scale)
         plot_heatmap(np.abs(y_sparse_tls_cov - y_bus), "y_sparse_tls_cov_errors",

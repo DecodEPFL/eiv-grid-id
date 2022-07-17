@@ -293,10 +293,8 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
             ols.fit(centered_voltage, centered_current)
             y_ols = ols.fitted_admittance_matrix
         else:
-            ols.fit(centered_voltage, np.real(centered_current))
-            y_ols = ols.fitted_admittance_matrix + 0j
-            ols.fit(centered_voltage, np.imag(centered_current))
-            y_ols += 1j * ols.fitted_admittance_matrix
+            ols.fit(centered_voltage, centered_current)
+            y_ols = ols.fitted_admittance_matrix
         pprint("Done!")
 
         # TLS Identification
@@ -312,10 +310,8 @@ def standard_methods(name, voltage, current, phases_ids=None, laplacian=False,
             tls.fit(centered_voltage, centered_current)
             y_tls = tls.fitted_admittance_matrix
         else:
-            tls.fit(centered_voltage, np.real(centered_current))
-            y_tls = tls.fitted_admittance_matrix + 0j
-            tls.fit(centered_voltage, np.imag(centered_current))
-            y_tls += 1j * tls.fitted_admittance_matrix
+            tls.fit(centered_voltage*(1+1j), centered_current)
+            y_tls = tls.fitted_admittance_matrix
         pprint("Done!")
 
         # Adaptive Lasso
@@ -469,7 +465,7 @@ def bayesian_eiv(name, voltage, current, phases_ids, voltage_sd_polar, current_s
         pprint("Loading STLS result...")
         sim_STLS = np.load(DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"), allow_pickle=True)
         y_sparse_tls_cov = sim_STLS["y"]
-        sparse_tls_cov_iterations = sim_STLS["i"]
+        sparse_tls_cov_iterations = sim_STLS["i"].tolist()
         pprint("Done!")
 
     return y_sparse_tls_cov, sparse_tls_cov_iterations

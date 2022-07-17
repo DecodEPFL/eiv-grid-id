@@ -18,23 +18,23 @@ while getopts 'ns' flag; do
 done
 
 if [ "$n_flag" == "true" ]; then
-  for seed in 11 #13 111 131
+  for seed in 131 # 11 13 111 1 31
   do
 
     sed -i "s/seed = 131/seed = $seed/g" conf/conf.py
     echo "seed $seed"
 
-    python3 simulate_network.py -ve --network cigre_mv_feeder1
+    python3 simulate_network.py -ve --network ieee_33 --gaussian-loads 0.2
 
-    for i in 0.01 0.1 0.2 0.5 1 2 5 10
+    for i in 0.01 0.1 0.2 0.5 1 2 4 5 10
     do
       echo "Test with noise level $i"
 
       sed -i "s/noise_level = 1/noise_level = $i/g" conf/conf.py
 
-      python3 simulate_network.py -de --network cigre_mv_feeder1
-      python3 identify_network.py -rw --max-iterations 4000 --network cigre_mv_feeder1
-      python3 plot_results.py -v --network cigre_mv_feeder1
+      python3 simulate_network.py -de --network ieee_33
+      python3 identify_network.py --max-iterations 4000 --network ieee_33
+      python3 plot_results.py -v --network ieee_33
 
       sed -i "s/noise_level = $i/noise_level = 1/g" conf/conf.py
     done

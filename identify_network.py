@@ -12,7 +12,7 @@ from src.simulation.lines import admittance_phase_to_sequence, measurement_phase
 @click.option('--max-iterations', "-i", default=50, help='Maximum number of iterations for Bayesian methods')
 @click.option('--standard', "-s", is_flag=True, help='Redo only standard methods')
 @click.option('--bayesian-eiv', "-b", is_flag=True, help='Redo only Bayesian eiv methods')
-@click.option('--continue-id', "-c", is_flag=True, help='Is the matrix laplacian')
+@click.option('--continue-id', "-c", is_flag=True, help='continue identification from the last point')
 @click.option('--phases', "-p", type=str, default="1", help='Phases or sequences to identify')
 @click.option('--sequence', "-q", is_flag=True, help='Use zero/positive/negative sequence values')
 @click.option('--exact', "-e", is_flag=True, help='Use exact values for prior')
@@ -84,20 +84,17 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
         sim_STLS = np.load(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"),
                            allow_pickle=True)
         y_init = sim_STLS["y"]
-        sparse_tls_cov_old_iterations = sim_STLS["i"]
+        sparse_tls_cov_old_iterations = sim_STLS["i"].tolist()
         pprint("Done!")
     else:
         y_init = (y_tls + y_tls.T).copy()/2
 
-    y_exact = y_bus if exact and not laplacian else None
+        # TODO: fix this
+        if True:  # unsynchronized:
+            pprint("Warning: Using lasso as starting point due to TLS difficulties with biased data.")
+            y_init = (y_lasso + y_lasso.T)/2 * ((1 - 0.5j) if unsynchronized else 1)
 
-    # TODO: fix this
-    if unsynchronized:
-        pprint("Warning: Using lasso as starting point due to TLS difficulties with biased data.")
-        y_init = (y_lasso + y_lasso.T)/2
-        #XR ratio can improve a lot the bias of lasso
-        #xr_ratio = 0.5
-        #y_init = y_init * (1 - xr_ratio*1j)
+    y_exact = y_bus if exact and not laplacian else None
 
     y_sparse_tls_cov, sparse_tls_cov_iterations = run_fcns.bayesian_eiv(name, noisy_voltage, noisy_current, phases_ids,
                                                                         voltage_magnitude_sd + 1j*voltage_phase_sd,
@@ -107,10 +104,11 @@ def identify(network, max_iterations, standard, bayesian_eiv, continue_id, phase
                                                                         not unsynchronized, verbose)
 
     if continue_id:
-        sparse_tls_cov_iterations = sparse_tls_cov_old_iterations.extend(sparse_tls_cov_iterations)
+        sparse_tls_cov_old_iterations.extend(sparse_tls_cov_iterations)
+        print(len(sparse_tls_cov_old_iterations))
 
         pprint("Saving updated result...")
-        sim_STLS = {'y': y_sparse_tls_cov, 'i': sparse_tls_cov_iterations}
+        sim_STLS = {'y': y_sparse_tls_cov, 'i': sparse_tls_cov_old_iterations}
         np.savez(conf.conf.DATA_DIR / ("simulations_output/bayesian_results_" + name + ".npz"), **sim_STLS)
         pprint("Done!")
 

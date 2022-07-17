@@ -33,7 +33,7 @@ measurement_frequency = 50 # [Hz] # 50
 safety_factor = 4
 
 # Do not touch that, rather change noise_level in conf.conf
-current_magnitude_sd = 1e-4 * noise_level
+current_magnitude_sd = 1e-4 * noise_level * 100
 voltage_magnitude_sd = 1e-4 * noise_level
-current_phase_sd = 0.01*np.pi/180 * noise_level
+current_phase_sd = 0.01*np.pi/180 * noise_level * 100
 voltage_phase_sd = 0.01*np.pi/180 * noise_level

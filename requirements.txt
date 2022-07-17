@@ -3,18 +3,18 @@
 # Mkdir simulation_output + plot_data
 # Powernorm doesn’t work with most recent packages
 
-click==8.1.3
+click>=8.1.3
 #cupy-cuda115==10.4.0
-numpy==1.22.3 #check upgrade
-pandapower==2.9.0 #check upgrade
-pandas==1.4.2
+numpy>=1.22.3 #check upgrade
+pandapower>=2.9.0 #check upgrade
+pandas>=1.4.2
 #pycuda==2021.1
-pytest==7.1.2
-scipy==1.8.0 #check upgrade
-seaborn==0.11.2
-setuptools==62.1.0
-tikzplotlib==0.10.1
-tqdm==4.64.0
+pytest>=7.1.2
+scipy>=1.8.0 #check upgrade
+seaborn>=0.11.2
+setuptools>=62.1.0
+tikzplotlib>=0.10.1
+tqdm>=4.64.0
 
 #still outdated due to powernorm
 matplotlib==3.3.3
